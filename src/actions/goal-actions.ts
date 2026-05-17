@@ -33,8 +33,9 @@ async function getSession() {
   return session;
 }
 
-async function getActiveCycle() {
-  return prisma.goalCycle.findFirst({ where: { status: "ACTIVE" } });
+function isGoalSettingWindowOpen(cycle: { goalSettingOpen: Date; goalSettingClose: Date }) {
+  const now = new Date();
+  return now >= cycle.goalSettingOpen && now <= cycle.goalSettingClose;
 }
 
 export async function createGoal(
@@ -45,11 +46,12 @@ export async function createGoal(
 
   const userId = session.user.userId;
 
-  const cycle = await getActiveCycle();
-  if (!cycle) return { success: false, error: "No active goal cycle found" };
+  const cycle = await prisma.goalCycle.findUnique({ where: { id: data.cycleId } });
+  if (!cycle || cycle.status !== "ACTIVE") {
+    return { success: false, error: "No active goal cycle found" };
+  }
 
-  const now = new Date();
-  if (now < cycle.goalSettingOpen || now > cycle.goalSettingClose) {
+  if (!isGoalSettingWindowOpen(cycle)) {
     return { success: false, error: "Goal setting window is not currently open" };
   }
 
@@ -119,9 +121,8 @@ export async function updateGoal(
     return { success: false, error: "Goal cannot be edited in its current status" };
   }
   if (existing.status === "DRAFT") {
-    const cycle = await getActiveCycle();
-    const now = new Date();
-    if (!cycle || now < cycle.goalSettingOpen || now > cycle.goalSettingClose) {
+    const cycle = await prisma.goalCycle.findUnique({ where: { id: existing.cycleId } });
+    if (!cycle || cycle.status !== "ACTIVE" || !isGoalSettingWindowOpen(cycle)) {
       return { success: false, error: "Goal setting window is not currently open" };
     }
   }
@@ -188,9 +189,8 @@ export async function deleteGoal(
   if (existing.sharedFromId !== null) {
     return { success: false, error: "Shared goals cannot be deleted" };
   }
-  const cycle = await getActiveCycle();
-  const now = new Date();
-  if (!cycle || now < cycle.goalSettingOpen || now > cycle.goalSettingClose) {
+  const cycle = await prisma.goalCycle.findUnique({ where: { id: existing.cycleId } });
+  if (!cycle || cycle.status !== "ACTIVE" || !isGoalSettingWindowOpen(cycle)) {
     return { success: false, error: "Goal setting window is not currently open" };
   }
 

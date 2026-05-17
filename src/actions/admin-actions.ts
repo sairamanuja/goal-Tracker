@@ -39,25 +39,82 @@ export interface CycleFormData {
   q4Close: string;
 }
 
+function parseCycleDates(data: CycleFormData) {
+  const parsed = {
+    goalSettingOpen: new Date(data.goalSettingOpen),
+    goalSettingClose: new Date(data.goalSettingClose),
+    q1Open: new Date(data.q1Open),
+    q1Close: new Date(data.q1Close),
+    q2Open: new Date(data.q2Open),
+    q2Close: new Date(data.q2Close),
+    q3Open: new Date(data.q3Open),
+    q3Close: new Date(data.q3Close),
+    q4Open: new Date(data.q4Open),
+    q4Close: new Date(data.q4Close),
+  };
+
+  const allValues = Object.values(parsed);
+  if (allValues.some((d) => Number.isNaN(d.getTime()))) {
+    return { ok: false as const, error: "One or more cycle dates are invalid" };
+  }
+
+  if (parsed.goalSettingOpen > parsed.goalSettingClose) {
+    return { ok: false as const, error: "Goal-setting open date must be before close date" };
+  }
+  if (parsed.q1Open > parsed.q1Close) {
+    return { ok: false as const, error: "Q1 open date must be before Q1 close date" };
+  }
+  if (parsed.q2Open > parsed.q2Close) {
+    return { ok: false as const, error: "Q2 open date must be before Q2 close date" };
+  }
+  if (parsed.q3Open > parsed.q3Close) {
+    return { ok: false as const, error: "Q3 open date must be before Q3 close date" };
+  }
+  if (parsed.q4Open > parsed.q4Close) {
+    return { ok: false as const, error: "Q4 open date must be before Q4 close date" };
+  }
+
+  if (parsed.goalSettingClose > parsed.q1Open) {
+    return { ok: false as const, error: "Goal-setting close must be on/before Q1 open" };
+  }
+  if (parsed.q1Close > parsed.q2Open) {
+    return { ok: false as const, error: "Q1 close must be on/before Q2 open" };
+  }
+  if (parsed.q2Close > parsed.q3Open) {
+    return { ok: false as const, error: "Q2 close must be on/before Q3 open" };
+  }
+  if (parsed.q3Close > parsed.q4Open) {
+    return { ok: false as const, error: "Q3 close must be on/before Q4 open" };
+  }
+
+  return { ok: true as const, dates: parsed };
+}
+
 export async function createCycle(
   data: CycleFormData
 ): Promise<{ success: boolean; error?: string }> {
   try {
     await requireAdminSession();
+
+    const validated = parseCycleDates(data);
+    if (!validated.ok) {
+      return { success: false, error: validated.error };
+    }
+
     await prisma.goalCycle.create({
       data: {
         name: data.name,
         year: data.year,
-        goalSettingOpen: new Date(data.goalSettingOpen),
-        goalSettingClose: new Date(data.goalSettingClose),
-        q1Open: new Date(data.q1Open),
-        q1Close: new Date(data.q1Close),
-        q2Open: new Date(data.q2Open),
-        q2Close: new Date(data.q2Close),
-        q3Open: new Date(data.q3Open),
-        q3Close: new Date(data.q3Close),
-        q4Open: new Date(data.q4Open),
-        q4Close: new Date(data.q4Close),
+        goalSettingOpen: validated.dates.goalSettingOpen,
+        goalSettingClose: validated.dates.goalSettingClose,
+        q1Open: validated.dates.q1Open,
+        q1Close: validated.dates.q1Close,
+        q2Open: validated.dates.q2Open,
+        q2Close: validated.dates.q2Close,
+        q3Open: validated.dates.q3Open,
+        q3Close: validated.dates.q3Close,
+        q4Open: validated.dates.q4Open,
+        q4Close: validated.dates.q4Close,
         status: "DRAFT",
       },
     });
@@ -75,21 +132,27 @@ export async function updateCycle(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     await requireAdminSession();
+
+    const validated = parseCycleDates(data);
+    if (!validated.ok) {
+      return { success: false, error: validated.error };
+    }
+
     await prisma.goalCycle.update({
       where: { id: cycleId },
       data: {
         name: data.name,
         year: data.year,
-        goalSettingOpen: new Date(data.goalSettingOpen),
-        goalSettingClose: new Date(data.goalSettingClose),
-        q1Open: new Date(data.q1Open),
-        q1Close: new Date(data.q1Close),
-        q2Open: new Date(data.q2Open),
-        q2Close: new Date(data.q2Close),
-        q3Open: new Date(data.q3Open),
-        q3Close: new Date(data.q3Close),
-        q4Open: new Date(data.q4Open),
-        q4Close: new Date(data.q4Close),
+        goalSettingOpen: validated.dates.goalSettingOpen,
+        goalSettingClose: validated.dates.goalSettingClose,
+        q1Open: validated.dates.q1Open,
+        q1Close: validated.dates.q1Close,
+        q2Open: validated.dates.q2Open,
+        q2Close: validated.dates.q2Close,
+        q3Open: validated.dates.q3Open,
+        q3Close: validated.dates.q3Close,
+        q4Open: validated.dates.q4Open,
+        q4Close: validated.dates.q4Close,
       },
     });
     updateTag("active-cycle");

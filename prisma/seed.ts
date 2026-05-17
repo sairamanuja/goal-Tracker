@@ -87,25 +87,52 @@ async function main() {
     },
   });
 
-  // Create goal cycle
+  const now = new Date();
+  const fiscalStartYear =
+    now.getUTCMonth() >= 3 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  const fiscalEndYear = fiscalStartYear + 1;
+  const cycleId = `fy${fiscalStartYear}-${String(fiscalEndYear).slice(-2)}-seed`;
+  const cycleName = `FY ${fiscalStartYear}-${String(fiscalEndYear).slice(-2)}`;
+
+  // Keep a single ACTIVE cycle after seeding.
+  await prisma.goalCycle.updateMany({
+    where: { status: "ACTIVE" },
+    data: { status: "DRAFT" },
+  });
+
+  // Create or update the current fiscal cycle with goal window open in Apr-Jun.
   await prisma.goalCycle.upsert({
-    where: { id: "fy2025-26-seed" },
-    update: {},
-    create: {
-      id: "fy2025-26-seed",
-      name: "FY 2025-26",
-      year: 2025,
+    where: { id: cycleId },
+    update: {
+      name: cycleName,
+      year: fiscalStartYear,
       status: "ACTIVE",
-      goalSettingOpen: new Date("2025-05-01T00:00:00.000Z"),
-      goalSettingClose: new Date("2025-06-30T23:59:59.000Z"),
-      q1Open: new Date("2025-07-01T00:00:00.000Z"),
-      q1Close: new Date("2025-07-31T23:59:59.000Z"),
-      q2Open: new Date("2025-10-01T00:00:00.000Z"),
-      q2Close: new Date("2025-10-31T23:59:59.000Z"),
-      q3Open: new Date("2026-01-01T00:00:00.000Z"),
-      q3Close: new Date("2026-01-31T23:59:59.000Z"),
-      q4Open: new Date("2026-03-01T00:00:00.000Z"),
-      q4Close: new Date("2026-04-30T23:59:59.000Z"),
+      goalSettingOpen: new Date(Date.UTC(fiscalStartYear, 3, 1, 0, 0, 0)),
+      goalSettingClose: new Date(Date.UTC(fiscalStartYear, 5, 30, 23, 59, 59)),
+      q1Open: new Date(Date.UTC(fiscalStartYear, 6, 1, 0, 0, 0)),
+      q1Close: new Date(Date.UTC(fiscalStartYear, 6, 31, 23, 59, 59)),
+      q2Open: new Date(Date.UTC(fiscalStartYear, 9, 1, 0, 0, 0)),
+      q2Close: new Date(Date.UTC(fiscalStartYear, 9, 31, 23, 59, 59)),
+      q3Open: new Date(Date.UTC(fiscalEndYear, 0, 1, 0, 0, 0)),
+      q3Close: new Date(Date.UTC(fiscalEndYear, 0, 31, 23, 59, 59)),
+      q4Open: new Date(Date.UTC(fiscalEndYear, 2, 1, 0, 0, 0)),
+      q4Close: new Date(Date.UTC(fiscalEndYear, 3, 30, 23, 59, 59)),
+    },
+    create: {
+      id: cycleId,
+      name: cycleName,
+      year: fiscalStartYear,
+      status: "ACTIVE",
+      goalSettingOpen: new Date(Date.UTC(fiscalStartYear, 3, 1, 0, 0, 0)),
+      goalSettingClose: new Date(Date.UTC(fiscalStartYear, 5, 30, 23, 59, 59)),
+      q1Open: new Date(Date.UTC(fiscalStartYear, 6, 1, 0, 0, 0)),
+      q1Close: new Date(Date.UTC(fiscalStartYear, 6, 31, 23, 59, 59)),
+      q2Open: new Date(Date.UTC(fiscalStartYear, 9, 1, 0, 0, 0)),
+      q2Close: new Date(Date.UTC(fiscalStartYear, 9, 31, 23, 59, 59)),
+      q3Open: new Date(Date.UTC(fiscalEndYear, 0, 1, 0, 0, 0)),
+      q3Close: new Date(Date.UTC(fiscalEndYear, 0, 31, 23, 59, 59)),
+      q4Open: new Date(Date.UTC(fiscalEndYear, 2, 1, 0, 0, 0)),
+      q4Close: new Date(Date.UTC(fiscalEndYear, 3, 30, 23, 59, 59)),
     },
   });
 

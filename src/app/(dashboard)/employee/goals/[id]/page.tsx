@@ -1,15 +1,18 @@
 import { requireEmployee } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { getActiveQuarter } from "@/lib/scoring";
 import { notFound, redirect } from "next/navigation";
 import { GoalForm } from "@/components/goals/goal-form";
 import { SharedGoalWeightageForm } from "@/components/goals/shared-goal-weightage-form";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
 import { AlertTriangle, Lock, Share2 } from "lucide-react";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 const UOM_LABEL: Record<string, string> = {
   NUMERIC: "Numeric",
@@ -31,8 +34,16 @@ export default async function GoalDetailPage(props: PageProps<"/employee/goals/[
   if (goal.userId !== userId) redirect("/unauthorized");
 
   const cycle = await prisma.goalCycle.findUnique({ where: { id: goal.cycleId } });
-  const isEditable = goal.status === "DRAFT" || goal.status === "RETURNED";
+  const now = new Date();
+  const isDraftInOpenWindow =
+    goal.status === "DRAFT" &&
+    !!cycle &&
+    cycle.status === "ACTIVE" &&
+    now >= cycle.goalSettingOpen &&
+    now <= cycle.goalSettingClose;
+  const isEditable = goal.status === "RETURNED" || isDraftInOpenWindow;
   const isSharedCopy = goal.sharedFromId !== null;
+  const activeQuarter = cycle ? getActiveQuarter(cycle) : null;
 
   // Pusher name for shared goals
   let pusherName: string | null = null;
@@ -79,6 +90,16 @@ export default async function GoalDetailPage(props: PageProps<"/employee/goals/[
         {isSharedCopy && pusherName && (
           <p className="text-sm mt-1 text-blue-600">Pushed by {pusherName}</p>
         )}
+        {goal.status === "APPROVED" && (
+          <div className="mt-3">
+            <Link
+              href={`/employee/goals/${goal.id}/achievement`}
+              className={cn(buttonVariants({ variant: "outline" }), "h-9")}
+            >
+              {activeQuarter ? `Log ${activeQuarter} Achievement` : "View Achievement Log"}
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Return comment banner */}
@@ -87,6 +108,16 @@ export default async function GoalDetailPage(props: PageProps<"/employee/goals/[
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Goal Returned by Manager</AlertTitle>
           <AlertDescription>{goal.returnComment}</AlertDescription>
+        </Alert>
+      )}
+
+      {goal.status === "DRAFT" && !isDraftInOpenWindow && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Goal window is closed</AlertTitle>
+          <AlertDescription>
+            This draft goal is currently read-only because the goal-setting window is closed.
+          </AlertDescription>
         </Alert>
       )}
 
