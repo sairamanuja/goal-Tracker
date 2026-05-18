@@ -14,22 +14,21 @@ const getReportsData = unstable_cache(
         where: {
           cycleId,
           status: "APPROVED",
-          sharedFromId: null,
-          ...(dept ? { user: { department: dept } } : {}),
+          user: { role: "EMPLOYEE", ...(dept ? { department: dept } : {}) },
           ...(thrust ? { thrustArea: thrust } : {}),
         },
         orderBy: [{ user: { name: "asc" } }, { createdAt: "asc" }],
         include: {
           user: { select: { name: true, department: true } },
-          achievements: { select: { quarter: true, actual: true, score: true } },
+          achievements: { select: { quarter: true, planned: true, actual: true, score: true } },
         },
       }),
       prisma.user.findMany({
-        where: { role: "EMPLOYEE" },
+        where: { role: "EMPLOYEE", ...(dept ? { department: dept } : {}) },
         orderBy: { name: "asc" },
         include: {
           goals: {
-            where: { cycleId, sharedFromId: null },
+            where: { cycleId },
             include: { achievements: { select: { quarter: true, score: true } } },
           },
         },
@@ -67,9 +66,9 @@ export default async function AdminReportsPage(props: {
     const achByQ = Object.fromEntries(
       QUARTERS.map((q) => {
         const a = g.achievements.find((a) => a.quarter === q);
-        return [q, { actual: a?.actual ?? null, score: a?.score ?? null }];
+        return [q, { planned: a?.planned ?? null, actual: a?.actual ?? null, score: a?.score ?? null }];
       })
-    );
+    ) as Record<Quarter, { planned: number | null; actual: number | null; score: number | null }>;
     const validScores = QUARTERS.map((q) => ({
       score: achByQ[q].score,
       weightage: g.weightage,
@@ -80,6 +79,7 @@ export default async function AdminReportsPage(props: {
         : null;
 
     return {
+      goalId: g.id,
       employeeName: g.user.name,
       department: g.user.department,
       goalTitle: g.title,
@@ -87,12 +87,18 @@ export default async function AdminReportsPage(props: {
       uomType: g.uomType,
       target: g.target,
       weightage: g.weightage,
+      status: g.status,
+      isLocked: g.isLocked,
+      q1Planned: achByQ["Q1"].planned,
       q1Actual: achByQ["Q1"].actual,
       q1Score: achByQ["Q1"].score,
+      q2Planned: achByQ["Q2"].planned,
       q2Actual: achByQ["Q2"].actual,
       q2Score: achByQ["Q2"].score,
+      q3Planned: achByQ["Q3"].planned,
       q3Actual: achByQ["Q3"].actual,
       q3Score: achByQ["Q3"].score,
+      q4Planned: achByQ["Q4"].planned,
       q4Actual: achByQ["Q4"].actual,
       q4Score: achByQ["Q4"].score,
       overallScore,

@@ -71,6 +71,7 @@ export default async function AchievementPage(props: {
         q,
         a
           ? {
+              planned: a.planned,
               actual: a.actual,
               completionDate: a.completionDate?.toISOString() ?? null,
               status: a.status,
@@ -79,7 +80,7 @@ export default async function AchievementPage(props: {
           : null,
       ];
     })
-  ) as Record<Quarter, { actual: number | null; completionDate: string | null; status: ProgressStatus; score: number | null } | null>;
+  ) as Record<Quarter, { planned: number | null; actual: number | null; completionDate: string | null; status: ProgressStatus; score: number | null } | null>;
 
   // Pusher name for shared copies
   let pusherName: string | null = null;

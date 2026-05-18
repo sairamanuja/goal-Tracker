@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { format } from "date-fns";
 type QuarterState = "active" | "past" | "future";
 
 interface SerializedAchievement {
+  planned: number | null;
   actual: number | null;
   completionDate: string | null;
   status: ProgressStatus;
@@ -49,6 +50,13 @@ interface AchievementTabsProps {
   pusherName: string | null;
 }
 
+type SavePayload = {
+  planned?: number;
+  actual?: number;
+  completionDate?: Date;
+  status: ProgressStatus;
+};
+
 const QUARTERS: Quarter[] = ["Q1", "Q2", "Q3", "Q4"];
 
 const STATUS_LABELS: Record<ProgressStatus, string> = {
@@ -68,51 +76,23 @@ export function AchievementTabs({
 }: AchievementTabsProps) {
   const [activeTab, setActiveTab] = useState<Quarter>(defaultTab);
   const [isPending, startTransition] = useTransition();
-
-  // Form fields
-  const [actual, setActual] = useState("");
-  const [completionDate, setCompletionDate] = useState("");
-  const [status, setStatus] = useState<ProgressStatus>("NOT_STARTED");
-
-  // Optimistic score state — updated after save, keyed by quarter
   const [savedScores, setSavedScores] = useState<Partial<Record<Quarter, number | null>>>({});
-
-  // Seed form fields from existing achievement whenever tab changes
-  useEffect(() => {
-    const a = achievements[activeTab];
-    setActual(a?.actual !== null && a?.actual !== undefined ? String(a.actual) : "");
-    setCompletionDate(
-      a?.completionDate ? a.completionDate.split("T")[0] : ""
-    );
-    setStatus((a?.status as ProgressStatus | undefined) ?? "NOT_STARTED");
-  }, [activeTab, achievements]);
-
-  function getDisplayScore(q: Quarter): number | null {
-    return savedScores[q] !== undefined ? savedScores[q] ?? null : (achievements[q]?.score ?? null);
-  }
 
   const currentState = quarterStates[activeTab];
   const currentAchievement = achievements[activeTab];
   const canEdit = !isSharedCopy && currentState === "active";
 
-  function handleSave() {
+  function getDisplayScore(q: Quarter): number | null {
+    return savedScores[q] !== undefined ? savedScores[q] ?? null : achievements[q]?.score ?? null;
+  }
+
+  function handleSave(payload: SavePayload) {
     startTransition(async () => {
-      const payload: {
-        goalId: string;
-        quarter: Quarter;
-        actual?: number;
-        completionDate?: Date;
-        status: ProgressStatus;
-      } = { goalId: goal.id, quarter: activeTab, status };
-
-      if (goal.uomType === "TIMELINE") {
-        if (completionDate) payload.completionDate = new Date(completionDate);
-      } else {
-        const parsed = parseFloat(actual);
-        if (!isNaN(parsed)) payload.actual = parsed;
-      }
-
-      const result = await saveAchievement(payload);
+      const result = await saveAchievement({
+        goalId: goal.id,
+        quarter: activeTab,
+        ...payload,
+      });
       if (result.success) {
         toast.success("Achievement saved");
         setSavedScores((prev) => ({ ...prev, [activeTab]: result.score ?? null }));
@@ -124,7 +104,6 @@ export function AchievementTabs({
 
   return (
     <div className="space-y-3">
-      {/* Tab bar */}
       <div className="flex gap-0 border-b">
         {QUARTERS.map((q) => {
           const qState = quarterStates[q];
@@ -137,19 +116,11 @@ export function AchievementTabs({
               type="button"
               disabled={isDisabled}
               onClick={() => !isDisabled && setActiveTab(q)}
-              title={
-                isDisabled
-                  ? `Opens ${format(new Date(quarterOpenDates[q]), "dd MMM yyyy")}`
-                  : undefined
-              }
+              title={isDisabled ? `Opens ${format(new Date(quarterOpenDates[q]), "dd MMM yyyy")}` : undefined}
               className={cn(
                 "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
-                activeTab === q
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground",
-                isDisabled
-                  ? "opacity-40 cursor-not-allowed"
-                  : "hover:text-foreground hover:border-muted-foreground"
+                activeTab === q ? "border-primary text-primary" : "border-transparent text-muted-foreground",
+                isDisabled ? "opacity-40 cursor-not-allowed" : "hover:text-foreground hover:border-muted-foreground"
               )}
             >
               {q}
@@ -162,7 +133,6 @@ export function AchievementTabs({
         })}
       </div>
 
-      {/* Tab content */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -175,10 +145,10 @@ export function AchievementTabs({
                 </span>
               )}
               {!isSharedCopy && currentState === "active" && (
-                <span className="text-primary font-medium">Quarter open — editable</span>
+                <span className="text-primary font-medium">Quarter open - editable</span>
               )}
               {!isSharedCopy && currentState === "past" && (
-                <span className="text-muted-foreground">Quarter closed — read only</span>
+                <span className="text-muted-foreground">Quarter closed - read only</span>
               )}
               {!isSharedCopy && currentState === "future" && (
                 <span className="text-muted-foreground flex items-center gap-1">
@@ -193,8 +163,7 @@ export function AchievementTabs({
         <CardContent className="space-y-4">
           {currentState === "future" && !isSharedCopy ? (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              This quarter opens on{" "}
-              {format(new Date(quarterOpenDates[activeTab]), "dd MMM yyyy")}.
+              This quarter opens on {format(new Date(quarterOpenDates[activeTab]), "dd MMM yyyy")}.
             </p>
           ) : isSharedCopy ? (
             <ReadOnlyContent
@@ -209,13 +178,9 @@ export function AchievementTabs({
             />
           ) : canEdit ? (
             <EditableForm
+              key={activeTab}
               goal={goal}
-              actual={actual}
-              setActual={setActual}
-              completionDate={completionDate}
-              setCompletionDate={setCompletionDate}
-              status={status}
-              setStatus={setStatus}
+              achievement={currentAchievement}
               savedScore={savedScores[activeTab]}
               onSave={handleSave}
               isPending={isPending}
@@ -229,43 +194,56 @@ export function AchievementTabs({
   );
 }
 
-// ─── Editable form ────────────────────────────────────────────────────────────
-
 function EditableForm({
   goal,
-  actual,
-  setActual,
-  completionDate,
-  setCompletionDate,
-  status,
-  setStatus,
+  achievement,
   savedScore,
   onSave,
   isPending,
 }: {
   goal: GoalData;
-  actual: string;
-  setActual: (v: string) => void;
-  completionDate: string;
-  setCompletionDate: (v: string) => void;
-  status: ProgressStatus;
-  setStatus: (v: ProgressStatus) => void;
+  achievement: SerializedAchievement | null;
   savedScore: number | null | undefined;
-  onSave: () => void;
+  onSave: (payload: SavePayload) => void;
   isPending: boolean;
 }) {
+  const [planned, setPlanned] = useState(
+    achievement?.planned !== null && achievement?.planned !== undefined ? String(achievement.planned) : ""
+  );
+  const [actual, setActual] = useState(
+    achievement?.actual !== null && achievement?.actual !== undefined ? String(achievement.actual) : ""
+  );
+  const [completionDate, setCompletionDate] = useState(
+    achievement?.completionDate ? achievement.completionDate.split("T")[0] : ""
+  );
+  const [status, setStatus] = useState<ProgressStatus>(achievement?.status ?? "NOT_STARTED");
+
   const isTimeline = goal.uomType === "TIMELINE";
   const isZero = goal.uomType === "ZERO";
 
+  function handleSave() {
+    const payload: SavePayload = { status };
+
+    if (!isTimeline) {
+      const plannedValue = parseFloat(planned);
+      if (!isNaN(plannedValue)) payload.planned = plannedValue;
+      const actualValue = parseFloat(actual);
+      if (!isNaN(actualValue)) payload.actual = actualValue;
+    } else if (completionDate) {
+      payload.completionDate = new Date(completionDate);
+    }
+
+    onSave(payload);
+  }
+
   return (
     <div className="space-y-4">
-      {/* Read-only reference: target / deadline */}
       <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm space-y-1">
         {isTimeline ? (
           <div className="flex justify-between">
             <span className="text-muted-foreground">Target Deadline</span>
             <span className="font-medium">
-              {goal.deadline ? format(new Date(goal.deadline), "dd MMM yyyy") : "—"}
+              {goal.deadline ? format(new Date(goal.deadline), "dd MMM yyyy") : "-"}
             </span>
           </div>
         ) : (
@@ -282,13 +260,27 @@ function EditableForm({
           <div className="flex justify-between">
             <span className="text-muted-foreground">Direction</span>
             <span className="font-medium">
-              {goal.uomDirection === "MIN" ? "↑ Higher is better" : "↓ Lower is better"}
+              {goal.uomDirection === "MIN" ? "Higher is better" : "Lower is better"}
             </span>
           </div>
         )}
       </div>
 
-      {/* Actual / Completion date */}
+      {!isTimeline && (
+        <div className="space-y-1.5">
+          <Label htmlFor="planned">Planned Achievement</Label>
+          <Input
+            id="planned"
+            type="number"
+            placeholder={isZero ? "0" : "Planned for this quarter"}
+            value={planned}
+            onChange={(e) => setPlanned(e.target.value)}
+            min={0}
+            max={goal.uomType === "PERCENTAGE" ? 100 : undefined}
+          />
+        </div>
+      )}
+
       {isTimeline ? (
         <div className="space-y-1.5">
           <Label htmlFor="completionDate">Completion Date</Label>
@@ -303,12 +295,12 @@ function EditableForm({
         <div className="space-y-1.5">
           <Label htmlFor="actual">
             {isZero ? "Number of Incidents (actual)" : "Actual Achievement"}
-            {goal.uomType === "PERCENTAGE" ? " (0–100%)" : ""}
+            {goal.uomType === "PERCENTAGE" ? " (0-100%)" : ""}
           </Label>
           <Input
             id="actual"
             type="number"
-            placeholder={isZero ? "0" : "e.g. 850000"}
+            placeholder={isZero ? "0" : "Actual for this quarter"}
             value={actual}
             onChange={(e) => setActual(e.target.value)}
             min={0}
@@ -326,13 +318,9 @@ function EditableForm({
         </div>
       )}
 
-      {/* Status */}
       <div className="space-y-1.5">
         <Label>Status</Label>
-        <Select
-          value={status}
-          onValueChange={(v) => setStatus((v ?? "NOT_STARTED") as ProgressStatus)}
-        >
+        <Select value={status} onValueChange={(v) => setStatus((v ?? "NOT_STARTED") as ProgressStatus)}>
           <SelectTrigger className="w-48">
             <SelectValue />
           </SelectTrigger>
@@ -346,10 +334,9 @@ function EditableForm({
         </Select>
       </div>
 
-      {/* Save + score */}
       <div className="flex items-center gap-4 pt-1">
-        <Button onClick={onSave} disabled={isPending} className="gap-2">
-          {isPending ? "Saving…" : "Save Achievement"}
+        <Button onClick={handleSave} disabled={isPending} className="gap-2">
+          {isPending ? "Saving..." : "Save Achievement"}
         </Button>
         {savedScore !== undefined && (
           <div className="flex items-center gap-2 text-sm">
@@ -366,8 +353,6 @@ function EditableForm({
   );
 }
 
-// ─── Read-only view ───────────────────────────────────────────────────────────
-
 function ReadOnlyContent({
   achievement,
   goal,
@@ -381,10 +366,7 @@ function ReadOnlyContent({
 }) {
   if (!achievement) {
     return (
-      <p className={cn(
-        "text-sm py-4 text-center",
-        pendingPrimary ? "text-amber-600" : "text-muted-foreground"
-      )}>
+      <p className={cn("text-sm py-4 text-center", pendingPrimary ? "text-amber-600" : "text-muted-foreground")}>
         {sharedNote ?? "No achievement data for this quarter."}
       </p>
     );
@@ -393,26 +375,31 @@ function ReadOnlyContent({
   const isTimeline = goal.uomType === "TIMELINE";
 
   const rows: { label: string; value: string }[] = [
-    ...(sharedNote ? [] : []),
+    ...(!isTimeline
+      ? [
+          {
+            label: "Planned Achievement",
+            value:
+              achievement.planned !== null
+                ? `${achievement.planned}${goal.uomType === "PERCENTAGE" ? "%" : ""}`
+                : "-",
+          },
+        ]
+      : []),
     !isTimeline
       ? {
           label: goal.uomType === "ZERO" ? "Incidents (actual)" : "Actual Achievement",
           value:
             achievement.actual !== null
               ? `${achievement.actual}${goal.uomType === "PERCENTAGE" ? "%" : ""}`
-              : "—",
+              : "-",
         }
       : {
           label: "Completion Date",
-          value: achievement.completionDate
-            ? format(new Date(achievement.completionDate), "dd MMM yyyy")
-            : "—",
+          value: achievement.completionDate ? format(new Date(achievement.completionDate), "dd MMM yyyy") : "-",
         },
     { label: "Status", value: STATUS_LABELS[achievement.status] ?? achievement.status },
-    {
-      label: "Score",
-      value: achievement.score !== null ? `${achievement.score.toFixed(0)}%` : "—",
-    },
+    { label: "Score", value: achievement.score !== null ? `${achievement.score.toFixed(0)}%` : "-" },
   ];
 
   return (
@@ -427,11 +414,7 @@ function ReadOnlyContent({
           <div key={label} className="flex justify-between py-2.5 text-sm">
             <dt className="text-muted-foreground">{label}</dt>
             <dd className="font-medium">
-              {label === "Score" && achievement.score !== null ? (
-                <ScoreBadge score={achievement.score} />
-              ) : (
-                value
-              )}
+              {label === "Score" && achievement.score !== null ? <ScoreBadge score={achievement.score} /> : value}
             </dd>
           </div>
         ))}

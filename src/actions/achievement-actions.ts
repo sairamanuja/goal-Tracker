@@ -10,6 +10,7 @@ import type { Quarter, ProgressStatus } from "@/generated/prisma";
 export async function saveAchievement(data: {
   goalId: string;
   quarter: Quarter;
+  planned?: number;
   actual?: number;
   completionDate?: Date;
   status: ProgressStatus;
@@ -63,12 +64,14 @@ export async function saveAchievement(data: {
       goalId: data.goalId,
       userId,
       quarter: data.quarter,
+      planned: data.planned ?? null,
       actual: data.actual ?? null,
       completionDate: data.completionDate ?? null,
       status: data.status,
       score,
     },
     update: {
+      planned: data.planned ?? null,
       actual: data.actual ?? null,
       completionDate: data.completionDate ?? null,
       status: data.status,
@@ -79,6 +82,7 @@ export async function saveAchievement(data: {
   // If this is a PRIMARY shared goal (isShared=true, no sharedFromId), sync to all linked copies
   if (goal.isShared && goal.sharedFromId === null) {
     await syncSharedAchievement(data.goalId, data.quarter, {
+      planned: data.planned ?? null,
       actual: data.actual ?? null,
       completionDate: data.completionDate ?? null,
       status: data.status,

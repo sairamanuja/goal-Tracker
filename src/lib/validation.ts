@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { THRUST_AREAS } from "@/lib/constants";
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),

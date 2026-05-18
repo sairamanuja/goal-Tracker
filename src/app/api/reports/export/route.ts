@@ -24,11 +24,13 @@ export async function GET(req: NextRequest) {
   }
 
   const goals = await prisma.goal.findMany({
-    where: { cycleId: cycle.id, sharedFromId: null },
+    where: { cycleId: cycle.id, user: { role: "EMPLOYEE" } },
     orderBy: [{ user: { name: "asc" } }, { createdAt: "asc" }],
     include: {
       user: { select: { name: true, department: true } },
-      achievements: { select: { quarter: true, actual: true, completionDate: true, score: true, status: true } },
+      achievements: {
+        select: { quarter: true, planned: true, actual: true, completionDate: true, score: true, status: true },
+      },
     },
   });
 
@@ -49,9 +51,9 @@ export async function GET(req: NextRequest) {
     const achByQ = Object.fromEntries(
       QUARTERS.map((q) => {
         const a = g.achievements.find((a) => a.quarter === q);
-        return [q, { actual: a?.actual ?? null, score: a?.score ?? null }];
+        return [q, { planned: a?.planned ?? null, actual: a?.actual ?? null, score: a?.score ?? null }];
       })
-    );
+    ) as Record<Quarter, { planned: number | null; actual: number | null; score: number | null }>;
     const validScores = QUARTERS.map((q) => ({ score: achByQ[q].score, weightage: g.weightage })).filter(
       (s) => s.score !== null
     );
@@ -63,12 +65,16 @@ export async function GET(req: NextRequest) {
     return {
       Employee: g.user.name,
       Goal: g.title,
+      "Q1 Planned": achByQ["Q1"].planned ?? "",
       "Q1 Actual": achByQ["Q1"].actual ?? "",
       "Q1 Score": achByQ["Q1"].score ?? "",
+      "Q2 Planned": achByQ["Q2"].planned ?? "",
       "Q2 Actual": achByQ["Q2"].actual ?? "",
       "Q2 Score": achByQ["Q2"].score ?? "",
+      "Q3 Planned": achByQ["Q3"].planned ?? "",
       "Q3 Actual": achByQ["Q3"].actual ?? "",
       "Q3 Score": achByQ["Q3"].score ?? "",
+      "Q4 Planned": achByQ["Q4"].planned ?? "",
       "Q4 Actual": achByQ["Q4"].actual ?? "",
       "Q4 Score": achByQ["Q4"].score ?? "",
       "Overall Score": overall ?? "",

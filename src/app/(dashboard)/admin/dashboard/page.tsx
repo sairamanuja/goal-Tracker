@@ -14,7 +14,7 @@ const getAdminDashboardData = unstable_cache(
     return Promise.all([
       prisma.user.count({ where: { role: "EMPLOYEE" } }),
       prisma.goal.findMany({
-        where: { cycleId, sharedFromId: null },
+        where: { cycleId, user: { role: "EMPLOYEE" } },
         include: {
           user: { select: { department: true } },
           achievements: { select: { quarter: true, score: true } },

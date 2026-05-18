@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { PageWrapper } from "@/components/shared/page-wrapper";
@@ -24,14 +24,14 @@ export function SidebarProvider({
   initialNotifications,
   children,
 }: SidebarProviderProps) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
+  const [collapsed, setCollapsed] = useState(() => {
     try {
-      setCollapsed(localStorage.getItem("sidebar-collapsed") === "true");
-    } catch { /* ignore */ }
-  }, []);
+      return typeof window !== "undefined" && localStorage.getItem("sidebar-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   function toggle() {
     setCollapsed((prev) => {

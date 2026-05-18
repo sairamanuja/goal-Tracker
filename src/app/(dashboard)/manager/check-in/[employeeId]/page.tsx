@@ -7,7 +7,6 @@ import { CheckInForm } from "@/components/check-in/check-in-form";
 import { ScoreBadge } from "@/components/goals/score-badge";
 import { Breadcrumb } from "@/components/layout/breadcrumb";
 import { format } from "date-fns";
-import type { Quarter } from "@/generated/prisma";
 
 const UOM_LABEL: Record<string, string> = {
   NUMERIC: "Numeric",
@@ -15,8 +14,6 @@ const UOM_LABEL: Record<string, string> = {
   TIMELINE: "Timeline",
   ZERO: "Zero",
 };
-
-const QUARTERS: Quarter[] = ["Q1", "Q2", "Q3", "Q4"];
 
 import type { Metadata } from "next";
 export const metadata: Metadata = { title: "Check-in" };
@@ -51,11 +48,12 @@ export default async function ManagerCheckInPage(props: {
     where: { userId: employeeId, cycleId: cycle.id, status: "APPROVED" },
     orderBy: { createdAt: "asc" },
     include: {
-      achievements: { select: { quarter: true, actual: true, completionDate: true, status: true, score: true } },
+      achievements: {
+        select: { quarter: true, planned: true, actual: true, completionDate: true, status: true, score: true },
+      },
     },
   });
 
-  // Existing check-in for active quarter
   const currentCheckIn = activeQ
     ? await prisma.checkIn.findUnique({
         where: {
@@ -64,13 +62,11 @@ export default async function ManagerCheckInPage(props: {
       })
     : null;
 
-  // All check-ins for history
   const allCheckIns = await prisma.checkIn.findMany({
     where: { managerId, employeeId },
     orderBy: { createdAt: "desc" },
   });
 
-  // Weighted overall score for active quarter
   let overallScore: number | null = null;
   if (activeQ) {
     const pieces = goals.map((g) => {
@@ -96,16 +92,15 @@ export default async function ManagerCheckInPage(props: {
         />
         <h1 className="text-2xl font-semibold">{employee.name}</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          {employee.department ?? "—"} · {cycle.name}
-          {activeQ && <span className="ml-2 text-primary font-medium">· {activeQ} open</span>}
+          {employee.department ?? "-"} - {cycle.name}
+          {activeQ && <span className="ml-2 text-primary font-medium">- {activeQ} open</span>}
         </p>
       </div>
 
-      {/* Goals summary table */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            Approved Goals{activeQ ? ` — ${activeQ} Progress` : ""}
+            Approved Goals{activeQ ? ` - ${activeQ} Progress` : ""}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -123,9 +118,14 @@ export default async function ManagerCheckInPage(props: {
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">UoM</th>
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Target</th>
                     {activeQ && (
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
-                        {activeQ} Actual
-                      </th>
+                      <>
+                        <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                          {activeQ} Planned
+                        </th>
+                        <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                          {activeQ} Actual
+                        </th>
+                      </>
                     )}
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Score</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
@@ -135,19 +135,23 @@ export default async function ManagerCheckInPage(props: {
                 <tbody className="divide-y">
                   {goals.map((goal) => {
                     const ach = activeQ ? goal.achievements.find((a) => a.quarter === activeQ) : undefined;
+                    const planned = ach?.planned;
                     const actual = ach?.actual;
                     const completionDate = ach?.completionDate;
 
-                    let actualDisplay = "—";
+                    const plannedDisplay =
+                      goal.uomType !== "TIMELINE" && planned !== null && planned !== undefined
+                        ? `${planned}${goal.uomType === "PERCENTAGE" ? "%" : ""}`
+                        : "-";
+
+                    let actualDisplay = "-";
                     if (goal.uomType === "TIMELINE") {
-                      actualDisplay = completionDate
-                        ? format(new Date(completionDate), "dd MMM yyyy")
-                        : "—";
+                      actualDisplay = completionDate ? format(new Date(completionDate), "dd MMM yyyy") : "-";
                     } else if (actual !== null && actual !== undefined) {
                       actualDisplay = `${actual}${goal.uomType === "PERCENTAGE" ? "%" : ""}`;
                     }
 
-                    let targetDisplay = "—";
+                    let targetDisplay = "-";
                     if (goal.uomType === "TIMELINE" && goal.deadline) {
                       targetDisplay = format(new Date(goal.deadline), "dd MMM yyyy");
                     } else if (goal.uomType === "ZERO") {
@@ -163,17 +167,20 @@ export default async function ManagerCheckInPage(props: {
                         <td className="px-4 py-3 text-muted-foreground">{UOM_LABEL[goal.uomType]}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{targetDisplay}</td>
                         {activeQ && (
-                          <td className="px-4 py-3 text-right tabular-nums">{actualDisplay}</td>
+                          <>
+                            <td className="px-4 py-3 text-right tabular-nums">{plannedDisplay}</td>
+                            <td className="px-4 py-3 text-right tabular-nums">{actualDisplay}</td>
+                          </>
                         )}
                         <td className="px-4 py-3 text-right">
                           {ach?.score !== null && ach?.score !== undefined ? (
                             <ScoreBadge score={ach.score} />
                           ) : (
-                            <span className="text-muted-foreground">—</span>
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground capitalize text-xs">
-                          {ach?.status?.replace("_", " ").toLowerCase() ?? "—"}
+                          {ach?.status?.replace("_", " ").toLowerCase() ?? "-"}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                           {goal.weightage}%
@@ -185,7 +192,7 @@ export default async function ManagerCheckInPage(props: {
                 {overallScore !== null && (
                   <tfoot>
                     <tr className="border-t bg-muted/20">
-                      <td colSpan={activeQ ? 5 : 4} className="px-4 py-3 text-sm font-medium">
+                      <td colSpan={activeQ ? 6 : 4} className="px-4 py-3 text-sm font-medium">
                         Overall Weighted Score
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -201,7 +208,6 @@ export default async function ManagerCheckInPage(props: {
         </CardContent>
       </Card>
 
-      {/* Check-in form */}
       {activeQ ? (
         <Card>
           <CardHeader className="pb-3">
@@ -224,7 +230,6 @@ export default async function ManagerCheckInPage(props: {
         </Card>
       )}
 
-      {/* Previous check-ins */}
       {allCheckIns.length > 0 && (
         <div>
           <h2 className="text-base font-semibold mb-3">Previous Check-ins</h2>
@@ -250,4 +255,3 @@ export default async function ManagerCheckInPage(props: {
     </div>
   );
 }
-

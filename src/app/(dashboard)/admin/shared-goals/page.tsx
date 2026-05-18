@@ -1,7 +1,9 @@
 import { requireAdmin } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { getActiveQuarter } from "@/lib/scoring";
 import { PushSharedGoalForm } from "@/components/goals/push-shared-goal-form";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SharedGoalAchievementButton } from "@/components/goals/shared-goal-achievement-button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { Share2 } from "lucide-react";
@@ -20,6 +22,7 @@ export default async function AdminSharedGoalsPage() {
   const session = await requireAdmin();
 
   const cycle = await prisma.goalCycle.findFirst({ where: { status: "ACTIVE" } });
+  const activeQuarter = cycle ? getActiveQuarter(cycle) : null;
 
   const employees = cycle
     ? await prisma.user.findMany({
@@ -32,7 +35,19 @@ export default async function AdminSharedGoalsPage() {
   const history = cycle
     ? await prisma.goal.findMany({
         where: { userId: session.user.userId, isShared: true, cycleId: cycle.id },
-        include: { _count: { select: { sharedTo: true } } },
+        include: {
+          _count: { select: { sharedTo: true } },
+          achievements: {
+            select: {
+              quarter: true,
+              planned: true,
+              actual: true,
+              completionDate: true,
+              status: true,
+              score: true,
+            },
+          },
+        },
         orderBy: { createdAt: "desc" },
       })
     : [];
@@ -95,13 +110,32 @@ export default async function AdminSharedGoalsPage() {
                           <span>Default {goal.weightage}%</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
                         <Badge variant="secondary">
                           {goal._count.sharedTo} recipient{goal._count.sharedTo !== 1 ? "s" : ""}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
                           {format(new Date(goal.createdAt), "dd MMM yyyy")}
                         </span>
+                        <SharedGoalAchievementButton
+                          activeQuarter={activeQuarter}
+                          goal={{
+                            id: goal.id,
+                            title: goal.title,
+                            uomType: goal.uomType,
+                            uomDirection: goal.uomDirection,
+                            target: goal.target,
+                            deadline: goal.deadline?.toISOString() ?? null,
+                            achievements: goal.achievements.map((achievement) => ({
+                              quarter: achievement.quarter,
+                              planned: achievement.planned,
+                              actual: achievement.actual,
+                              completionDate: achievement.completionDate?.toISOString() ?? null,
+                              status: achievement.status,
+                              score: achievement.score,
+                            })),
+                          }}
+                        />
                       </div>
                     </div>
                   </div>

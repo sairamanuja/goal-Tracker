@@ -1,8 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { computeScore, getActiveQuarter } from "@/lib/scoring";
 import type { UomType, UomDirection, Quarter, ProgressStatus } from "@/generated/prisma";
 
 export interface SharedGoalInput {
@@ -166,10 +167,101 @@ export async function updateSharedGoalWeightage(
   return { success: true };
 }
 
+export async function saveSharedGoalAchievement(data: {
+  goalId: string;
+  quarter: Quarter;
+  planned?: number;
+  actual?: number;
+  completionDate?: Date;
+  status: ProgressStatus;
+}): Promise<{ success: boolean; error?: string; score?: number | null }> {
+  const session = await getPusherSession();
+  if (!session) return { success: false, error: "Unauthorized" };
+
+  const ownerId = session.user.userId;
+  const goal = await prisma.goal.findUnique({ where: { id: data.goalId } });
+  if (!goal) return { success: false, error: "Shared goal not found" };
+  if (goal.userId !== ownerId) return { success: false, error: "Unauthorized" };
+  if (!goal.isShared || goal.sharedFromId !== null) {
+    return { success: false, error: "Only primary shared goals can be updated here" };
+  }
+  if (goal.status !== "APPROVED" || !goal.isLocked) {
+    return { success: false, error: "Shared goal must be approved before achievements can be logged" };
+  }
+
+  const cycle = await prisma.goalCycle.findUnique({ where: { id: goal.cycleId } });
+  if (!cycle) return { success: false, error: "Goal cycle not found" };
+
+  const activeQ = getActiveQuarter(cycle);
+  if (activeQ !== data.quarter) {
+    return {
+      success: false,
+      error: `${data.quarter} is not currently open for updates${activeQ ? ` - ${activeQ} is active` : ""}`,
+    };
+  }
+
+  if (goal.uomType === "TIMELINE" && !data.completionDate) {
+    return { success: false, error: "Completion date is required for timeline goals" };
+  }
+
+  const planned = data.planned ?? null;
+  const actual = data.actual ?? null;
+  const completionDate = data.completionDate ?? null;
+  const score = computeScore(
+    goal.uomType,
+    goal.uomDirection,
+    goal.target,
+    actual,
+    goal.deadline,
+    completionDate
+  );
+
+  await prisma.achievement.upsert({
+    where: { goalId_quarter: { goalId: goal.id, quarter: data.quarter } },
+    create: {
+      goalId: goal.id,
+      userId: ownerId,
+      quarter: data.quarter,
+      planned,
+      actual,
+      completionDate,
+      status: data.status,
+      score,
+    },
+    update: {
+      planned,
+      actual,
+      completionDate,
+      status: data.status,
+      score,
+    },
+  });
+
+  await syncSharedAchievement(goal.id, data.quarter, {
+    planned,
+    actual,
+    completionDate,
+    status: data.status,
+    score,
+  });
+
+  updateTag("employee-goals");
+  updateTag("manager-dashboard");
+  updateTag("admin-dashboard");
+  updateTag("reports");
+  updateTag("analytics");
+  revalidatePath("/admin/shared-goals");
+  revalidatePath("/manager/shared-goals");
+  revalidatePath("/admin/reports");
+
+  return { success: true, score };
+}
+
 export async function syncSharedAchievement(
   primaryGoalId: string,
   quarter: Quarter,
   data: {
+    planned?: number | null;
     actual?: number | null;
     completionDate?: Date | null;
     status: ProgressStatus;
@@ -189,12 +281,14 @@ export async function syncSharedAchievement(
           goalId: goal.id,
           userId: goal.userId,
           quarter,
+          planned: data.planned ?? null,
           actual: data.actual ?? null,
           completionDate: data.completionDate ?? null,
           status: data.status,
           score: data.score ?? null,
         },
         update: {
+          planned: data.planned ?? null,
           actual: data.actual ?? null,
           completionDate: data.completionDate ?? null,
           status: data.status,

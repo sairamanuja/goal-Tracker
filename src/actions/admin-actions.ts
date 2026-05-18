@@ -254,24 +254,58 @@ export async function unlockGoal(
     }
     const goal = await prisma.goal.findUnique({ where: { id: goalId } });
     if (!goal) return { success: false, error: "Goal not found" };
+    if (goal.status !== "APPROVED" || !goal.isLocked) {
+      return { success: false, error: "Only locked approved goals can be unlocked" };
+    }
+
+    const trimmedReason = reason.trim();
 
     await prisma.$transaction(async (tx) => {
       await tx.goal.update({
         where: { id: goalId },
-        data: { isLocked: false },
-      });
-      await tx.auditLog.create({
         data: {
-          goalId,
-          userId: adminId,
-          action: "UNLOCKED",
-          field: "isLocked",
-          oldValue: "true",
-          newValue: "false",
+          isLocked: false,
+          status: "RETURNED",
+          returnComment: `Unlocked by Admin: ${trimmedReason}`,
         },
       });
+      await tx.auditLog.createMany({
+        data: [
+          {
+            goalId,
+            userId: adminId,
+            action: "UNLOCKED",
+            field: "isLocked",
+            oldValue: "true",
+            newValue: "false",
+          },
+          {
+            goalId,
+            userId: adminId,
+            action: "UNLOCKED",
+            field: "status",
+            oldValue: goal.status,
+            newValue: "RETURNED",
+          },
+          {
+            goalId,
+            userId: adminId,
+            action: "UNLOCKED",
+            field: "returnComment",
+            oldValue: goal.returnComment ?? "null",
+            newValue: trimmedReason,
+          },
+        ],
+      });
     });
+    updateTag("employee-goals");
+    updateTag("manager-dashboard");
+    updateTag("admin-dashboard");
+    updateTag("reports");
     revalidatePath("/admin/audit-log");
+    revalidatePath("/admin/reports");
+    revalidatePath(`/employee/goals/${goalId}`);
+    revalidatePath("/employee/goals");
 
     // Notify employee — fire-and-forget
     void (async () => {

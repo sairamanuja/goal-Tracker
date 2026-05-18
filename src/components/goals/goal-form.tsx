@@ -66,9 +66,7 @@ export function GoalForm({ cycleId, currentTotalWeight, existingGoal, mode }: Go
   );
 
   const parsedWeightage = parseFloat(weightage) || 0;
-  const weightExcludingThis =
-    mode === "edit" ? currentTotalWeight - (existingGoal?.weightage ?? 0) : currentTotalWeight;
-  const projectedTotal = weightExcludingThis + parsedWeightage;
+  const projectedTotal = currentTotalWeight + parsedWeightage;
 
   function handleUomChange(val: UomType) {
     setUomType(val);
