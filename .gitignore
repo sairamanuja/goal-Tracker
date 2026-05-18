@@ -48,9 +48,11 @@ Thumbs.db
 # ── Vercel ────────────────────────────────────────────────────────────────────
 .vercel
 
-# ── Claude / AI tooling ───────────────────────────────────────────────────────
+# ── Claude / AI tooling & local architecture assets ───────────────────────────
 CLAUDE.md
 AGENTS.md
+architecture.svg
+architecture.pdf
 
 # ── Turbopack / misc cache ────────────────────────────────────────────────────
 .turbo/

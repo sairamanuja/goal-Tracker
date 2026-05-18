@@ -54,12 +54,12 @@ export async function GET(req: NextRequest) {
         return [q, { planned: a?.planned ?? null, actual: a?.actual ?? null, score: a?.score ?? null }];
       })
     ) as Record<Quarter, { planned: number | null; actual: number | null; score: number | null }>;
-    const validScores = QUARTERS.map((q) => ({ score: achByQ[q].score, weightage: g.weightage })).filter(
-      (s) => s.score !== null
+    const validScores = QUARTERS.map((q) => achByQ[q].score).filter(
+      (score): score is number => score !== null
     );
     const overall =
       validScores.length > 0
-        ? Math.round(validScores.reduce((sum, s) => sum + (s.score! * s.weightage) / 100, 0) * 100) / 100
+        ? Math.round((validScores.reduce((sum, score) => sum + score, 0) / validScores.length) * 100) / 100
         : null;
 
     return {

@@ -13,9 +13,10 @@ export default async function EmployeeCheckInsPage() {
 
   const checkIns = await prisma.checkIn.findMany({
     where: { employeeId: userId },
-    orderBy: [{ quarter: "asc" }, { createdAt: "desc" }],
+    orderBy: [{ cycle: { year: "desc" } }, { quarter: "asc" }, { createdAt: "desc" }],
     include: {
       manager: { select: { name: true } },
+      cycle: { select: { name: true } },
     },
   });
 
@@ -56,6 +57,7 @@ export default async function EmployeeCheckInsPage() {
                           {format(new Date(c.updatedAt), "dd MMM yyyy")}
                         </span>
                       </div>
+                      <p className="text-xs text-primary mb-2">{c.cycle.name}</p>
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{c.comment}</p>
                     </CardContent>
                   </Card>

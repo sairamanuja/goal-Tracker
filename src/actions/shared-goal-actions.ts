@@ -4,6 +4,8 @@ import { revalidatePath, updateTag } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeScore, getActiveQuarter } from "@/lib/scoring";
+import { achievementSchema, goalSchema } from "@/lib/validation";
+import { MAX_GOALS_PER_CYCLE, MIN_GOAL_WEIGHTAGE } from "@/lib/goal-rules";
 import type { UomType, UomDirection, Quarter, ProgressStatus } from "@/generated/prisma";
 
 export interface SharedGoalInput {
@@ -26,6 +28,13 @@ async function getPusherSession() {
   return session;
 }
 
+async function wasGoalPreviouslyLocked(goalId: string) {
+  const count = await prisma.auditLog.count({
+    where: { goalId, action: { in: ["APPROVED", "UNLOCKED"] } },
+  });
+  return count > 0;
+}
+
 export async function pushSharedGoal(data: SharedGoalInput): Promise<{
   success: boolean;
   error?: string;
@@ -37,8 +46,9 @@ export async function pushSharedGoal(data: SharedGoalInput): Promise<{
 
   const pusherId = session.user.userId;
   const pusherRole = session.user.role;
+  const recipientIds = [...new Set(data.recipientIds ?? [])];
 
-  if (!data.recipientIds || data.recipientIds.length === 0) {
+  if (recipientIds.length === 0) {
     return { success: false, error: "Select at least one recipient" };
   }
 
@@ -47,87 +57,118 @@ export async function pushSharedGoal(data: SharedGoalInput): Promise<{
     return { success: false, error: "No active goal cycle" };
   }
 
-  if (data.defaultWeightage < 10 || data.defaultWeightage > 100) {
+  const parsedGoal = goalSchema.safeParse({
+    thrustArea: data.thrustArea,
+    title: data.title,
+    description: data.description,
+    uomType: data.uomType,
+    uomDirection: data.uomDirection,
+    target: data.uomType === "ZERO" || data.uomType === "TIMELINE" ? undefined : data.target,
+    deadline: data.uomType === "TIMELINE" && data.deadline ? data.deadline : undefined,
+    weightage: data.defaultWeightage,
+    cycleId: data.cycleId,
+  });
+  if (!parsedGoal.success) {
+    return { success: false, error: parsedGoal.error.issues[0]?.message ?? "Validation failed" };
+  }
+
+  if (data.defaultWeightage < MIN_GOAL_WEIGHTAGE || data.defaultWeightage > 100) {
     return { success: false, error: "Default weightage must be between 10% and 100%" };
   }
 
-  // Managers can only push to direct reports
-  if (pusherRole === "MANAGER") {
-    const directReports = await prisma.user.findMany({
-      where: { managerId: pusherId },
-      select: { id: true },
-    });
-    const directReportIds = new Set(directReports.map((r) => r.id));
-    const unauthorized = data.recipientIds.filter((id) => !directReportIds.has(id));
-    if (unauthorized.length > 0) {
-      return { success: false, error: "Some recipients are not your direct reports" };
-    }
-  }
-
-  // Create the primary goal owned by pusher
-  const primary = await prisma.goal.create({
-    data: {
-      userId: pusherId,
-      cycleId: data.cycleId,
-      thrustArea: data.thrustArea,
-      title: data.title,
-      description: data.description || null,
-      uomType: data.uomType,
-      uomDirection: data.uomType === "ZERO" || data.uomType === "TIMELINE" ? "MIN" : data.uomDirection,
-      target: data.uomType === "ZERO" || data.uomType === "TIMELINE" ? 0 : data.target,
-      deadline: data.uomType === "TIMELINE" ? data.deadline : null,
-      weightage: data.defaultWeightage,
-      isShared: true,
-      status: "APPROVED",
-      isLocked: true,
+  const recipients = await prisma.user.findMany({
+    where: {
+      id: { in: recipientIds },
+      role: "EMPLOYEE",
+      ...(pusherRole === "MANAGER" ? { managerId: pusherId } : {}),
     },
+    select: { id: true, name: true },
   });
+  const authorizedRecipientIds = new Set(recipients.map((r) => r.id));
+
+  if (recipientIds.some((id) => !authorizedRecipientIds.has(id))) {
+    return {
+      success: false,
+      error:
+        pusherRole === "MANAGER"
+          ? "Some recipients are not your direct reports"
+          : "Some recipients are not valid employees",
+    };
+  }
 
   // Check how many goals each recipient already has in this cycle
   const goalCounts = await prisma.goal.groupBy({
     by: ["userId"],
-    where: { userId: { in: data.recipientIds }, cycleId: data.cycleId },
+    where: { userId: { in: recipientIds }, cycleId: data.cycleId },
     _count: { id: true },
   });
   const countMap = new Map(goalCounts.map((r) => [r.userId, r._count.id]));
 
-  const recipients = await prisma.user.findMany({
-    where: { id: { in: data.recipientIds } },
-    select: { id: true, name: true },
-  });
   const nameMap = new Map(recipients.map((r) => [r.id, r.name]));
 
   const toCreate: string[] = [];
   const skipped: string[] = [];
 
-  for (const recipientId of data.recipientIds) {
-    if ((countMap.get(recipientId) ?? 0) >= 8) {
+  for (const recipientId of recipientIds) {
+    if ((countMap.get(recipientId) ?? 0) >= MAX_GOALS_PER_CYCLE) {
       skipped.push(nameMap.get(recipientId) ?? recipientId);
     } else {
       toCreate.push(recipientId);
     }
   }
 
-  if (toCreate.length > 0) {
-    await prisma.goal.createMany({
+  if (toCreate.length === 0) {
+    return {
+      success: false,
+      error: "No selected recipients can receive this goal because they are already at the 8-goal limit",
+      skipped,
+    };
+  }
+
+  const parsed = parsedGoal.data;
+  const target = parsed.uomType === "ZERO" || parsed.uomType === "TIMELINE" ? 0 : parsed.target ?? 0;
+  const deadline = parsed.uomType === "TIMELINE" ? parsed.deadline ?? null : null;
+  const uomDirection =
+    parsed.uomType === "ZERO" || parsed.uomType === "TIMELINE" ? "MIN" : parsed.uomDirection;
+
+  await prisma.$transaction(async (tx) => {
+    const primary = await tx.goal.create({
+      data: {
+        userId: pusherId,
+        cycleId: data.cycleId,
+        thrustArea: parsed.thrustArea,
+        title: parsed.title,
+        description: parsed.description || null,
+        uomType: parsed.uomType,
+        uomDirection,
+        target,
+        deadline,
+        weightage: parsed.weightage,
+        isShared: true,
+        status: "APPROVED",
+        isLocked: true,
+      },
+    });
+
+    await tx.goal.createMany({
       data: toCreate.map((recipientId) => ({
         userId: recipientId,
         cycleId: data.cycleId,
-        thrustArea: data.thrustArea,
-        title: data.title,
-        description: data.description || null,
-        uomType: data.uomType,
-        uomDirection: data.uomType === "ZERO" || data.uomType === "TIMELINE" ? "MIN" : data.uomDirection,
-        target: data.uomType === "ZERO" || data.uomType === "TIMELINE" ? 0 : data.target,
-        deadline: data.uomType === "TIMELINE" ? data.deadline : null,
-        weightage: data.defaultWeightage,
+        thrustArea: parsed.thrustArea,
+        title: parsed.title,
+        description: parsed.description || null,
+        uomType: parsed.uomType,
+        uomDirection,
+        target,
+        deadline,
+        weightage: parsed.weightage,
         isShared: false,
         sharedFromId: primary.id,
         status: "DRAFT",
         isLocked: false,
       })),
     });
-  }
+  });
 
   revalidatePath("/admin/shared-goals");
   revalidatePath("/manager/shared-goals");
@@ -140,7 +181,9 @@ export async function updateSharedGoalWeightage(
   weightage: number
 ): Promise<{ success: boolean; error?: string }> {
   const session = await auth();
-  if (!session?.user?.userId) return { success: false, error: "Unauthorized" };
+  if (!session?.user?.userId || session.user.role !== "EMPLOYEE") {
+    return { success: false, error: "Unauthorized" };
+  }
 
   const userId = session.user.userId;
 
@@ -153,13 +196,29 @@ export async function updateSharedGoalWeightage(
   if (goal.status !== "DRAFT" && goal.status !== "RETURNED") {
     return { success: false, error: "Goal cannot be edited in its current status" };
   }
-  if (weightage < 10 || weightage > 100) {
+  if (!Number.isFinite(weightage) || weightage < MIN_GOAL_WEIGHTAGE || weightage > 100) {
     return { success: false, error: "Weightage must be between 10% and 100%" };
   }
 
-  await prisma.goal.update({
-    where: { id: goalId },
-    data: { weightage },
+  const shouldAudit = goal.isLocked || await wasGoalPreviouslyLocked(goalId);
+  await prisma.$transaction(async (tx) => {
+    await tx.goal.update({
+      where: { id: goalId },
+      data: { weightage },
+    });
+
+    if (shouldAudit && goal.weightage !== weightage) {
+      await tx.auditLog.create({
+        data: {
+          goalId,
+          userId,
+          action: "EMPLOYEE_EDITED_POST_LOCK",
+          field: "weightage",
+          oldValue: String(goal.weightage),
+          newValue: String(weightage),
+        },
+      });
+    }
   });
 
   revalidatePath("/employee/goals");
@@ -178,8 +237,14 @@ export async function saveSharedGoalAchievement(data: {
   const session = await getPusherSession();
   if (!session) return { success: false, error: "Unauthorized" };
 
+  const parsedAchievement = achievementSchema.safeParse(data);
+  if (!parsedAchievement.success) {
+    return { success: false, error: parsedAchievement.error.issues[0]?.message ?? "Validation failed" };
+  }
+  const input = parsedAchievement.data;
+
   const ownerId = session.user.userId;
-  const goal = await prisma.goal.findUnique({ where: { id: data.goalId } });
+  const goal = await prisma.goal.findUnique({ where: { id: input.goalId } });
   if (!goal) return { success: false, error: "Shared goal not found" };
   if (goal.userId !== ownerId) return { success: false, error: "Unauthorized" };
   if (!goal.isShared || goal.sharedFromId !== null) {
@@ -193,20 +258,28 @@ export async function saveSharedGoalAchievement(data: {
   if (!cycle) return { success: false, error: "Goal cycle not found" };
 
   const activeQ = getActiveQuarter(cycle);
-  if (activeQ !== data.quarter) {
+  if (activeQ !== input.quarter) {
     return {
       success: false,
-      error: `${data.quarter} is not currently open for updates${activeQ ? ` - ${activeQ} is active` : ""}`,
+      error: `${input.quarter} is not currently open for updates${activeQ ? ` - ${activeQ} is active` : ""}`,
     };
   }
 
-  if (goal.uomType === "TIMELINE" && !data.completionDate) {
+  if (goal.uomType === "TIMELINE" && !input.completionDate) {
     return { success: false, error: "Completion date is required for timeline goals" };
   }
 
-  const planned = data.planned ?? null;
-  const actual = data.actual ?? null;
-  const completionDate = data.completionDate ?? null;
+  if (
+    goal.uomType === "PERCENTAGE" &&
+    ((input.planned !== undefined && input.planned > 100) ||
+      (input.actual !== undefined && input.actual > 100))
+  ) {
+    return { success: false, error: "Percentage planned and actual values must be between 0 and 100" };
+  }
+
+  const planned = input.planned ?? null;
+  const actual = input.actual ?? null;
+  const completionDate = input.completionDate ?? null;
   const score = computeScore(
     goal.uomType,
     goal.uomDirection,
@@ -217,31 +290,31 @@ export async function saveSharedGoalAchievement(data: {
   );
 
   await prisma.achievement.upsert({
-    where: { goalId_quarter: { goalId: goal.id, quarter: data.quarter } },
+    where: { goalId_quarter: { goalId: goal.id, quarter: input.quarter } },
     create: {
       goalId: goal.id,
       userId: ownerId,
-      quarter: data.quarter,
+      quarter: input.quarter,
       planned,
       actual,
       completionDate,
-      status: data.status,
+      status: input.status,
       score,
     },
     update: {
       planned,
       actual,
       completionDate,
-      status: data.status,
+      status: input.status,
       score,
     },
   });
 
-  await syncSharedAchievement(goal.id, data.quarter, {
+  await syncSharedAchievement(goal.id, input.quarter, {
     planned,
     actual,
     completionDate,
-    status: data.status,
+    status: input.status,
     score,
   });
 

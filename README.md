@@ -2,10 +2,21 @@
 
 A full-stack employee goal-setting and performance tracking portal built for the **AtomQuest Hackathon 1.0**. Covers the complete goal lifecycle — creation, manager approval, quarterly achievement logging, check-ins, and analytics — across three user roles.
 
+### Documentation map
+
+| Document | Best for | Contents |
+|---|---|---|
+| **[README.md](./README.md)** (you are here) | Running and deploying the app | Features, tech stack, install, env vars, project layout, demo credentials |
+| **[SUBMISSION_ARCHITECTURE.md](./SUBMISSION_ARCHITECTURE.md)** | Hackathon / product review | Requirement matrix (10/10 + bonuses), unified control flow, competitive summary |
+| **[arch.md](./arch.md)** | Deep technical review | Layers, auth & data flows, workflows, decision trees, DB relationships, routing |
+
+**Where to start:** local setup → this README · requirement compliance → [SUBMISSION_ARCHITECTURE.md](./SUBMISSION_ARCHITECTURE.md) · implementation detail → [arch.md](./arch.md)
+
 ---
 
 ## Table of Contents
 
+- [Documentation map](#documentation-map)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
@@ -100,6 +111,8 @@ External Services
 Vercel Cron (daily 08:00 UTC)
   └── /api/admin/run-escalations  ← rule-based escalation engine
 ```
+
+**More architecture detail:** layered diagrams, per-role workflows, and decision trees → [arch.md](./arch.md). Hackathon requirement mapping and simplified end-to-end control flow → [SUBMISSION_ARCHITECTURE.md](./SUBMISSION_ARCHITECTURE.md).
 
 **Key architectural decisions:**
 - Server Components fetch data at request time — no client-side data fetching for page loads

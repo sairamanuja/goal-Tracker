@@ -1,6 +1,7 @@
 import { requireEmployee } from "@/lib/auth-guard";
 import { getActiveCycle, getEmployeeGoals } from "@/lib/cached-queries";
 import { getActiveQuarter } from "@/lib/scoring";
+import { isTotalWeightageExact } from "@/lib/goal-rules";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -79,7 +80,7 @@ export default async function EmployeeGoalsPage() {
   const canSubmit =
     !allLocked &&
     goals.filter((g) => g.status === "DRAFT" || g.status === "RETURNED").length > 0 &&
-    Math.round(totalWeight) === 100;
+    isTotalWeightageExact(totalWeight);
 
   return (
     <div className="space-y-6">

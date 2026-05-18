@@ -27,6 +27,7 @@ import { WeightageBar } from "@/components/goals/weightage-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { approveGoalSheet, returnGoalSheet, updateGoalAsManager } from "@/actions/approval-actions";
 import { cn } from "@/lib/utils";
+import { isTotalWeightageExact } from "@/lib/goal-rules";
 import { CheckCircle2, RotateCcw, Loader2, Share2, Lock } from "lucide-react";
 import { format } from "date-fns";
 import type { Goal } from "@/generated/prisma";
@@ -73,7 +74,7 @@ export function GoalReviewTable({
   const prevValues = useRef<Record<string, EditState>>({ ...editStates });
 
   const currentTotalWeight = goals.reduce((s, g) => s + g.weightage, 0);
-  const isWeightageValid = Math.round(currentTotalWeight) === 100;
+  const isWeightageValid = isTotalWeightageExact(currentTotalWeight);
   const hasSubmitted = goals.some((g) => g.status === "SUBMITTED");
   const canApprove = canEdit && hasSubmitted && isWeightageValid && savingId === null;
 

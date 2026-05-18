@@ -57,13 +57,18 @@ export default async function ManagerCheckInPage(props: {
   const currentCheckIn = activeQ
     ? await prisma.checkIn.findUnique({
         where: {
-          managerId_employeeId_quarter: { managerId, employeeId, quarter: activeQ },
+          managerId_employeeId_cycleId_quarter: {
+            managerId,
+            employeeId,
+            cycleId: cycle.id,
+            quarter: activeQ,
+          },
         },
       })
     : null;
 
   const allCheckIns = await prisma.checkIn.findMany({
-    where: { managerId, employeeId },
+    where: { managerId, employeeId, cycleId: cycle.id },
     orderBy: { createdAt: "desc" },
   });
 

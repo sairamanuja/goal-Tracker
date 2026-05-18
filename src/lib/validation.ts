@@ -27,6 +27,10 @@ export const goalSchema = z
       return data.target !== undefined && data.target !== null;
     },
     { message: "Target or deadline required based on UoM type" }
+  )
+  .refine(
+    (data) => data.uomType !== "PERCENTAGE" || data.target === undefined || data.target <= 100,
+    { message: "Percentage target must be between 0 and 100" }
   );
 
 export const achievementSchema = z.object({
@@ -41,7 +45,7 @@ export const achievementSchema = z.object({
 export const checkInSchema = z.object({
   employeeId: z.string().min(1),
   quarter: z.enum(["Q1", "Q2", "Q3", "Q4"]),
-  comment: z.string().min(10, "Comment must be at least 10 characters").max(2000),
+  comment: z.string().min(20, "Comment must be at least 20 characters").max(2000),
 });
 
 export const goalCycleSchema = z.object({
@@ -69,9 +73,14 @@ export const userSchema = z.object({
   managerId: z.string().optional(),
 });
 
+export const createUserSchema = userSchema.extend({
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type GoalInput = z.infer<typeof goalSchema>;
 export type AchievementInput = z.infer<typeof achievementSchema>;
 export type CheckInInput = z.infer<typeof checkInSchema>;
 export type GoalCycleInput = z.infer<typeof goalCycleSchema>;
 export type UserInput = z.infer<typeof userSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;

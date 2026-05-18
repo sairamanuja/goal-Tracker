@@ -2,6 +2,7 @@ import { requireManager } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { getActiveCycle, getManagerDashboardData } from "@/lib/cached-queries";
 import { getActiveQuarter } from "@/lib/scoring";
+import { isTotalWeightageExact } from "@/lib/goal-rules";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,7 +48,7 @@ export default async function ManagerDashboardPage() {
       : Promise.resolve({ reports: [], teamAchs: [], approvedGoals: [] }),
     activeQ && cycle
       ? prisma.checkIn.findMany({
-          where: { managerId, quarter: activeQ },
+          where: { managerId, cycleId: cycle.id, quarter: activeQ },
           select: { employeeId: true, updatedAt: true },
         })
       : Promise.resolve([]),
@@ -269,7 +270,7 @@ export default async function ManagerDashboardPage() {
                         <span
                           className={cn(
                             "font-medium tabular-nums",
-                            Math.round(totalWeight) === 100 ? "text-green-600" : "text-amber-600"
+                            isTotalWeightageExact(totalWeight) ? "text-green-600" : "text-amber-600"
                           )}
                         >
                           {totalWeight.toFixed(0)}%

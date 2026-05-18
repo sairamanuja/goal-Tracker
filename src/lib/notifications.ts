@@ -1,11 +1,18 @@
-// Notification utilities — gracefully no-ops if env vars are missing
-// All functions are fire-and-forget; errors are logged but never thrown.
+// Notification utilities. Integrations gracefully no-op if env vars are missing.
+// Errors are logged but never thrown.
 
 import { Resend } from "resend";
 
 const BASE_URL = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
 
-// ─── Email via Resend ─────────────────────────────────────────────────────────
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
 export async function sendEmailNotification(
   to: string,
@@ -24,8 +31,6 @@ export async function sendEmailNotification(
     console.error("[notifications] email failed:", e);
   }
 }
-
-// ─── Teams Adaptive Card via Incoming Webhook ────────────────────────────────
 
 export async function sendTeamsNotification(
   _userEmail: string,
@@ -80,37 +85,44 @@ export async function sendTeamsNotification(
   }
 }
 
-// ─── Notification helpers ─────────────────────────────────────────────────────
-
 export function goalSubmissionEmail(employeeName: string, cycleName: string) {
+  const safeEmployeeName = escapeHtml(employeeName);
+  const safeCycleName = escapeHtml(cycleName);
   return `
     <p>Hi,</p>
-    <p><strong>${employeeName}</strong> has submitted their goal sheet for <strong>${cycleName}</strong> and is awaiting your approval.</p>
-    <p><a href="${BASE_URL}/manager/dashboard">Review in GoalTrack →</a></p>
+    <p><strong>${safeEmployeeName}</strong> has submitted their goal sheet for <strong>${safeCycleName}</strong> and is awaiting your approval.</p>
+    <p><a href="${BASE_URL}/manager/dashboard">Review in GoalTrack -></a></p>
   `;
 }
 
 export function goalApprovedEmail(managerName: string, cycleName: string) {
+  const safeManagerName = escapeHtml(managerName);
+  const safeCycleName = escapeHtml(cycleName);
   return `
     <p>Hi,</p>
-    <p>Your goal sheet for <strong>${cycleName}</strong> has been approved by <strong>${managerName}</strong>. You can now log quarterly achievements.</p>
-    <p><a href="${BASE_URL}/employee/goals">View your goals →</a></p>
+    <p>Your goal sheet for <strong>${safeCycleName}</strong> has been approved by <strong>${safeManagerName}</strong>. You can now log quarterly achievements.</p>
+    <p><a href="${BASE_URL}/employee/goals">View your goals -></a></p>
   `;
 }
 
 export function goalReturnedEmail(managerName: string, comment: string, cycleName: string) {
+  const safeManagerName = escapeHtml(managerName);
+  const safeComment = escapeHtml(comment);
+  const safeCycleName = escapeHtml(cycleName);
   return `
     <p>Hi,</p>
-    <p>Your goal sheet for <strong>${cycleName}</strong> has been returned by <strong>${managerName}</strong> for revision.</p>
-    <blockquote>${comment}</blockquote>
-    <p><a href="${BASE_URL}/employee/goals">Review and update your goals →</a></p>
+    <p>Your goal sheet for <strong>${safeCycleName}</strong> has been returned by <strong>${safeManagerName}</strong> for revision.</p>
+    <blockquote>${safeComment}</blockquote>
+    <p><a href="${BASE_URL}/employee/goals">Review and update your goals -></a></p>
   `;
 }
 
 export function quarterOpenEmail(quarterName: string, cycleName: string) {
+  const safeQuarterName = escapeHtml(quarterName);
+  const safeCycleName = escapeHtml(cycleName);
   return `
     <p>Hi,</p>
-    <p><strong>${quarterName}</strong> of <strong>${cycleName}</strong> is now open for achievement logging. Please update your progress.</p>
-    <p><a href="${BASE_URL}/employee/goals">Log achievements →</a></p>
+    <p><strong>${safeQuarterName}</strong> of <strong>${safeCycleName}</strong> is now open for achievement logging. Please update your progress.</p>
+    <p><a href="${BASE_URL}/employee/goals">Log achievements -></a></p>
   `;
 }

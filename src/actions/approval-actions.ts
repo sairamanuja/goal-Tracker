@@ -10,6 +10,7 @@ import {
   goalReturnedEmail,
 } from "@/lib/notifications";
 import { createNotification } from "@/lib/create-notification";
+import { isTotalWeightageExact, MAX_GOALS_PER_CYCLE, MIN_GOAL_WEIGHTAGE } from "@/lib/goal-rules";
 
 async function getManagerSession() {
   const session = await auth();
@@ -36,22 +37,22 @@ export async function approveGoalSheet(
   if (!employee) return { success: false, error: "Employee not found or not your direct report" };
 
   const goals = await prisma.goal.findMany({
-    where: { userId: employeeId, cycleId, status: "SUBMITTED" },
+    where: { userId: employeeId, cycleId },
   });
 
-  if (goals.length === 0) {
+  if (!goals.some((g) => g.status === "SUBMITTED")) {
     return { success: false, error: "No submitted goals to approve" };
   }
 
   const totalWeight = goals.reduce((s, g) => s + g.weightage, 0);
-  if (Math.round(totalWeight) !== 100) {
+  if (!isTotalWeightageExact(totalWeight)) {
     return {
       success: false,
       error: `Total weightage is ${totalWeight.toFixed(1)}% — must equal 100%`,
     };
   }
 
-  const belowMin = goals.find((g) => g.weightage < 10);
+  const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
   if (belowMin) {
     return {
       success: false,
@@ -59,13 +60,13 @@ export async function approveGoalSheet(
     };
   }
 
-  if (goals.length > 8) {
+  if (goals.length > MAX_GOALS_PER_CYCLE) {
     return { success: false, error: "Maximum 8 goals allowed per cycle" };
   }
 
   await prisma.$transaction(async (tx) => {
     await tx.goal.updateMany({
-      where: { userId: employeeId, cycleId, status: "SUBMITTED" },
+      where: { userId: employeeId, cycleId },
       data: { status: "APPROVED", isLocked: true },
     });
 
@@ -203,8 +204,27 @@ export async function updateGoalAsManager(
     return { success: false, error: "Unauthorized: not this employee's manager" };
   }
 
-  if (data.weightage !== undefined && (data.weightage < 10 || data.weightage > 100)) {
+  if (
+    data.weightage !== undefined &&
+    (!Number.isFinite(data.weightage) || data.weightage < MIN_GOAL_WEIGHTAGE || data.weightage > 100)
+  ) {
     return { success: false, error: "Weightage must be between 10% and 100%" };
+  }
+
+  if (data.target !== undefined) {
+    if (Number.isNaN(data.target) || data.target < 0) {
+      return { success: false, error: "Target must be non-negative" };
+    }
+    if (goal.uomType === "PERCENTAGE" && data.target > 100) {
+      return { success: false, error: "Percentage target must be between 0 and 100" };
+    }
+  }
+
+  if (data.deadline !== undefined && data.deadline !== null) {
+    const date = new Date(data.deadline);
+    if (Number.isNaN(date.getTime())) {
+      return { success: false, error: "Deadline is invalid" };
+    }
   }
 
   // Shared goal copies: only weightage may be edited by manager; target/deadline are locked

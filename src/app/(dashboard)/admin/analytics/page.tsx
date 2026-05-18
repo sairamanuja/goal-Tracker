@@ -64,6 +64,7 @@ const getAnalyticsData = unstable_cache(
             },
           },
           checkInsGiven: {
+            where: { cycleId },
             select: { employeeId: true, quarter: true },
           },
         },

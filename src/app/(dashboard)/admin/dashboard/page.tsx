@@ -21,7 +21,7 @@ const getAdminDashboardData = unstable_cache(
         },
       }),
       activeQ
-        ? prisma.checkIn.count({ where: { quarter: activeQ as "Q1" | "Q2" | "Q3" | "Q4" } })
+        ? prisma.checkIn.count({ where: { cycleId, quarter: activeQ as "Q1" | "Q2" | "Q3" | "Q4" } })
         : Promise.resolve(0),
     ]);
   },

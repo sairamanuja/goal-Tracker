@@ -123,16 +123,19 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
         },
         include: {
           manager: { select: { email: true, manager: { select: { email: true } } } },
-          goals: {
-            where: { cycleId: cycle.id, status: "APPROVED" },
-            include: { achievements: { where: { quarter: activeQ } } },
-          },
         },
       });
 
-      const violators = employees.filter(
-        (e) => e.goals.length > 0 && e.goals.every((g) => g.achievements.length === 0)
-      );
+      const completedCheckIns = await prisma.checkIn.findMany({
+        where: {
+          cycleId: cycle.id,
+          quarter: activeQ,
+          employeeId: { in: employees.map((e) => e.id) },
+        },
+        select: { employeeId: true },
+      });
+      const completedEmployeeIds = new Set(completedCheckIns.map((c) => c.employeeId));
+      const violators = employees.filter((e) => !completedEmployeeIds.has(e.id));
 
       for (const emp of violators) {
         const exists = await prisma.escalation.findFirst({

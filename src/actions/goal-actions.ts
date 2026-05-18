@@ -5,15 +5,17 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { goalSchema } from "@/lib/validation";
 import {
+  isTotalWeightageExact,
+  MAX_GOALS_PER_CYCLE,
+  MIN_GOAL_WEIGHTAGE,
+} from "@/lib/goal-rules";
+import {
   sendEmailNotification,
   sendTeamsNotification,
   goalSubmissionEmail,
 } from "@/lib/notifications";
 import { createNotification } from "@/lib/create-notification";
 import type { UomDirection, UomType } from "@/generated/prisma";
-
-const MAX_GOALS = 8;
-const REQUIRED_TOTAL_WEIGHT = 100;
 
 export type GoalFormData = {
   thrustArea: string;
@@ -29,13 +31,24 @@ export type GoalFormData = {
 
 async function getSession() {
   const session = await auth();
-  if (!session?.user?.userId) return null;
+  if (!session?.user?.userId || session.user.role !== "EMPLOYEE") return null;
   return session;
 }
 
 function isGoalSettingWindowOpen(cycle: { goalSettingOpen: Date; goalSettingClose: Date }) {
   const now = new Date();
   return now >= cycle.goalSettingOpen && now <= cycle.goalSettingClose;
+}
+
+async function wasPreviouslyLocked(goalId: string) {
+  const count = await prisma.auditLog.count({
+    where: { goalId, action: { in: ["APPROVED", "UNLOCKED"] } },
+  });
+  return count > 0;
+}
+
+function isoOrNull(value: Date | null | undefined) {
+  return value ? value.toISOString() : "null";
 }
 
 export async function createGoal(
@@ -58,7 +71,7 @@ export async function createGoal(
   const count = await prisma.goal.count({
     where: { userId, cycleId: data.cycleId },
   });
-  if (count >= MAX_GOALS) {
+  if (count >= MAX_GOALS_PER_CYCLE) {
     return { success: false, error: "Maximum 8 goals allowed per cycle" };
   }
 
@@ -152,18 +165,61 @@ export async function updateGoal(
       ? new Date(parsed.data.deadline)
       : null;
 
-  await prisma.goal.update({
-    where: { id: goalId },
-    data: {
-      thrustArea,
-      title,
-      description: description || null,
-      uomType,
-      uomDirection: uomType === "ZERO" || uomType === "TIMELINE" ? "MIN" : uomDirection,
-      target,
-      deadline,
-      weightage,
-    },
+  const nextDescription = description || null;
+  const nextUomDirection = uomType === "ZERO" || uomType === "TIMELINE" ? "MIN" : uomDirection;
+  const updateData = {
+    thrustArea,
+    title,
+    description: nextDescription,
+    uomType,
+    uomDirection: nextUomDirection,
+    target,
+    deadline,
+    weightage,
+  };
+
+  const shouldAudit = existing.isLocked || await wasPreviouslyLocked(goalId);
+  const auditEntries: Array<{
+    goalId: string;
+    userId: string;
+    action: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+  }> = [];
+
+  if (shouldAudit) {
+    const addAudit = (field: string, oldValue: string, newValue: string) => {
+      if (oldValue !== newValue) {
+        auditEntries.push({
+          goalId,
+          userId,
+          action: "EMPLOYEE_EDITED_POST_LOCK",
+          field,
+          oldValue,
+          newValue,
+        });
+      }
+    };
+
+    addAudit("thrustArea", existing.thrustArea, thrustArea);
+    addAudit("title", existing.title, title);
+    addAudit("description", existing.description ?? "null", nextDescription ?? "null");
+    addAudit("uomType", existing.uomType, uomType);
+    addAudit("uomDirection", existing.uomDirection, nextUomDirection);
+    addAudit("target", String(existing.target), String(target));
+    addAudit("deadline", isoOrNull(existing.deadline), isoOrNull(deadline));
+    addAudit("weightage", String(existing.weightage), String(weightage));
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.goal.update({
+      where: { id: goalId },
+      data: updateData,
+    });
+    if (auditEntries.length > 0) {
+      await tx.auditLog.createMany({ data: auditEntries });
+    }
   });
 
   updateTag("employee-goals");
@@ -209,22 +265,27 @@ export async function submitGoalSheet(
   const userId = session.user.userId;
 
   const goals = await prisma.goal.findMany({
-    where: {
-      userId,
-      cycleId,
-      status: { in: ["DRAFT", "RETURNED"] },
-    },
+    where: { userId, cycleId },
   });
 
   if (goals.length === 0) {
     return { success: false, error: "No goals to submit" };
   }
 
-  if (goals.length > MAX_GOALS) {
+  if (goals.length > MAX_GOALS_PER_CYCLE) {
     return { success: false, error: "Maximum 8 goals allowed per cycle" };
   }
 
-  const belowMin = goals.find((g) => g.weightage < 10);
+  const editableGoals = goals.filter((g) => g.status === "DRAFT" || g.status === "RETURNED");
+  if (editableGoals.length === 0) {
+    return { success: false, error: "No draft or returned goals to submit" };
+  }
+
+  if (goals.some((g) => g.status === "SUBMITTED")) {
+    return { success: false, error: "Goal sheet is already submitted and awaiting approval" };
+  }
+
+  const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
   if (belowMin) {
     return {
       success: false,
@@ -233,7 +294,7 @@ export async function submitGoalSheet(
   }
 
   const totalWeight = goals.reduce((sum, g) => sum + g.weightage, 0);
-  if (Math.round(totalWeight) !== REQUIRED_TOTAL_WEIGHT) {
+  if (!isTotalWeightageExact(totalWeight)) {
     return {
       success: false,
       error: `Total weightage is ${totalWeight.toFixed(1)}% — must equal exactly 100%`,

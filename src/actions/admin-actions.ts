@@ -4,6 +4,7 @@ import { revalidatePath, updateTag } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { createUserSchema } from "@/lib/validation";
 import {
   getAppToken,
   getAllGraphUsers,
@@ -259,6 +260,7 @@ export async function unlockGoal(
     }
 
     const trimmedReason = reason.trim();
+    const returnComment = `Unlocked by Admin: ${trimmedReason}`;
 
     await prisma.$transaction(async (tx) => {
       await tx.goal.update({
@@ -266,7 +268,7 @@ export async function unlockGoal(
         data: {
           isLocked: false,
           status: "RETURNED",
-          returnComment: `Unlocked by Admin: ${trimmedReason}`,
+          returnComment,
         },
       });
       await tx.auditLog.createMany({
@@ -293,7 +295,7 @@ export async function unlockGoal(
             action: "UNLOCKED",
             field: "returnComment",
             oldValue: goal.returnComment ?? "null",
-            newValue: trimmedReason,
+            newValue: returnComment,
           },
         ],
       });
@@ -434,18 +436,25 @@ export async function createUser(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     await requireAdminSession();
-    const existing = await prisma.user.findUnique({ where: { email: data.email } });
+
+    const parsed = createUserSchema.safeParse(data);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "Validation failed" };
+    }
+    const input = parsed.data;
+
+    const existing = await prisma.user.findUnique({ where: { email: input.email } });
     if (existing) return { success: false, error: "Email already in use" };
 
-    const hash = await bcrypt.hash(data.password, 10);
+    const hash = await bcrypt.hash(input.password, 10);
     await prisma.user.create({
       data: {
-        name: data.name,
-        email: data.email,
+        name: input.name,
+        email: input.email,
         password: hash,
-        role: data.role,
-        department: data.department ?? null,
-        managerId: data.managerId ?? null,
+        role: input.role,
+        department: input.department ?? null,
+        managerId: input.managerId ?? null,
       },
     });
     revalidatePath("/admin/users");

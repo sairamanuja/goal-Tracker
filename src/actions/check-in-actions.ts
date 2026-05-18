@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getActiveQuarter } from "@/lib/scoring";
 import { createNotification } from "@/lib/create-notification";
+import { checkInSchema } from "@/lib/validation";
 import type { Quarter } from "@/generated/prisma";
 
 export async function submitCheckIn(data: {
@@ -18,12 +19,14 @@ export async function submitCheckIn(data: {
   }
   const managerId = session.user.userId;
 
-  if (data.comment.trim().length < 20) {
-    return { success: false, error: "Comment must be at least 20 characters" };
+  const parsed = checkInSchema.safeParse(data);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Validation failed" };
   }
+  const { employeeId, quarter, comment } = parsed.data;
 
   const employee = await prisma.user.findUnique({
-    where: { id: data.employeeId },
+    where: { id: employeeId },
     select: { managerId: true },
   });
   if (!employee || employee.managerId !== managerId) {
@@ -34,28 +37,30 @@ export async function submitCheckIn(data: {
   if (!cycle) return { success: false, error: "No active cycle" };
 
   const activeQ = getActiveQuarter(cycle);
-  if (activeQ !== data.quarter) {
-    return { success: false, error: `${data.quarter} is not the active quarter` };
+  if (activeQ !== quarter) {
+    return { success: false, error: `${quarter} is not the active quarter` };
   }
 
   await prisma.checkIn.upsert({
     where: {
-      managerId_employeeId_quarter: {
+      managerId_employeeId_cycleId_quarter: {
         managerId,
-        employeeId: data.employeeId,
-        quarter: data.quarter,
+        employeeId,
+        cycleId: cycle.id,
+        quarter,
       },
     },
-    update: { comment: data.comment.trim() },
+    update: { comment: comment.trim() },
     create: {
       managerId,
-      employeeId: data.employeeId,
-      quarter: data.quarter,
-      comment: data.comment.trim(),
+      employeeId,
+      cycleId: cycle.id,
+      quarter,
+      comment: comment.trim(),
     },
   });
 
-  revalidatePath(`/manager/check-in/${data.employeeId}`);
+  revalidatePath(`/manager/check-in/${employeeId}`);
   revalidatePath("/manager/dashboard");
 
   // Notify employee — fire-and-forget
@@ -67,10 +72,10 @@ export async function submitCheckIn(data: {
       });
       if (manager?.name) {
         await createNotification({
-          userId: data.employeeId,
+          userId: employeeId,
           type: "CHECK_IN",
-          title: `Check-in received for ${data.quarter}`,
-          body: `${manager.name} submitted a check-in for ${data.quarter} (${cycle.name}).`,
+          title: `Check-in received for ${quarter}`,
+          body: `${manager.name} submitted a check-in for ${quarter} (${cycle.name}).`,
           href: "/employee/check-ins",
         });
       }
