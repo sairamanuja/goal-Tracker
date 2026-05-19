@@ -362,9 +362,9 @@ Runs automatically every day at **08:00 UTC** via Vercel Cron (`vercel.json`). V
 
 | Role | Email | Password |
 |---|---|---|
-| Admin / HR | `admin@goaltrack.com` | `admin123` |
-| Manager | `manager@goaltrack.com` | `manager123` |
-| Employee | `emp1@goaltrack.com` | `emp123` |
+| Admin / HR | `admin@goaltrack.com` | `Password@123` |
+| Manager | `manager@goaltrack.com` | `Password@123` |
+| Employee | `emp@goaltrack.com` | `Password@123` |
 
 > Microsoft SSO is also available if Entra ID is configured.
 

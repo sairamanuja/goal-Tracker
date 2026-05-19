@@ -3,7 +3,7 @@
 import { revalidatePath, updateTag } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeScore, getActiveQuarter } from "@/lib/scoring";
+import { computeAchievementScore, getActiveQuarter, validateAchievementStatus } from "@/lib/scoring";
 import { achievementSchema } from "@/lib/validation";
 import { syncSharedAchievement } from "@/actions/shared-goal-actions";
 import type { Quarter, ProgressStatus } from "@/generated/prisma";
@@ -53,26 +53,36 @@ export async function saveAchievement(data: {
     };
   }
 
-  if (goal.uomType === "TIMELINE" && !input.completionDate) {
+  const actual = input.status === "NOT_STARTED" ? null : input.actual ?? null;
+  const completionDate = input.status === "NOT_STARTED" ? null : input.completionDate ?? null;
+
+  if (input.status !== "NOT_STARTED" && goal.uomType !== "TIMELINE" && actual === null) {
+    return { success: false, error: "Actual achievement is required once work has started" };
+  }
+
+  if (input.status === "COMPLETED" && goal.uomType === "TIMELINE" && !completionDate) {
     return { success: false, error: "Completion date is required for timeline goals" };
   }
 
   if (
     goal.uomType === "PERCENTAGE" &&
     ((input.planned !== undefined && input.planned > 100) ||
-      (input.actual !== undefined && input.actual > 100))
+      (actual !== null && actual > 100))
   ) {
     return { success: false, error: "Percentage planned and actual values must be between 0 and 100" };
   }
 
-  const score = computeScore(
+  const score = computeAchievementScore(
+    input.status,
     goal.uomType,
     goal.uomDirection,
     goal.target,
-    input.actual ?? null,
+    actual,
     goal.deadline,
-    input.completionDate ?? null
+    completionDate
   );
+  const statusError = validateAchievementStatus(input.status, goal.uomType, score, completionDate);
+  if (statusError) return { success: false, error: statusError };
 
   await prisma.achievement.upsert({
     where: { goalId_quarter: { goalId: input.goalId, quarter: input.quarter } },
@@ -81,15 +91,15 @@ export async function saveAchievement(data: {
       userId,
       quarter: input.quarter,
       planned: input.planned ?? null,
-      actual: input.actual ?? null,
-      completionDate: input.completionDate ?? null,
+      actual,
+      completionDate,
       status: input.status,
       score,
     },
     update: {
       planned: input.planned ?? null,
-      actual: input.actual ?? null,
-      completionDate: input.completionDate ?? null,
+      actual,
+      completionDate,
       status: input.status,
       score,
     },
@@ -98,8 +108,8 @@ export async function saveAchievement(data: {
   if (goal.isShared && goal.sharedFromId === null) {
     await syncSharedAchievement(input.goalId, input.quarter, {
       planned: input.planned ?? null,
-      actual: input.actual ?? null,
-      completionDate: input.completionDate ?? null,
+      actual,
+      completionDate,
       status: input.status,
       score,
     });

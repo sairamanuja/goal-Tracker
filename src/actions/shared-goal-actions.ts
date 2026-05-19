@@ -3,7 +3,7 @@
 import { revalidatePath, updateTag } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeScore, getActiveQuarter } from "@/lib/scoring";
+import { computeAchievementScore, getActiveQuarter, validateAchievementStatus } from "@/lib/scoring";
 import { achievementSchema, goalSchema } from "@/lib/validation";
 import { MAX_GOALS_PER_CYCLE, MIN_GOAL_WEIGHTAGE } from "@/lib/goal-rules";
 import type { UomType, UomDirection, Quarter, ProgressStatus } from "@/generated/prisma";
@@ -265,22 +265,28 @@ export async function saveSharedGoalAchievement(data: {
     };
   }
 
-  if (goal.uomType === "TIMELINE" && !input.completionDate) {
+  const planned = input.planned ?? null;
+  const actual = input.status === "NOT_STARTED" ? null : input.actual ?? null;
+  const completionDate = input.status === "NOT_STARTED" ? null : input.completionDate ?? null;
+
+  if (input.status !== "NOT_STARTED" && goal.uomType !== "TIMELINE" && actual === null) {
+    return { success: false, error: "Actual achievement is required once work has started" };
+  }
+
+  if (input.status === "COMPLETED" && goal.uomType === "TIMELINE" && !completionDate) {
     return { success: false, error: "Completion date is required for timeline goals" };
   }
 
   if (
     goal.uomType === "PERCENTAGE" &&
     ((input.planned !== undefined && input.planned > 100) ||
-      (input.actual !== undefined && input.actual > 100))
+      (actual !== null && actual > 100))
   ) {
     return { success: false, error: "Percentage planned and actual values must be between 0 and 100" };
   }
 
-  const planned = input.planned ?? null;
-  const actual = input.actual ?? null;
-  const completionDate = input.completionDate ?? null;
-  const score = computeScore(
+  const score = computeAchievementScore(
+    input.status,
     goal.uomType,
     goal.uomDirection,
     goal.target,
@@ -288,6 +294,8 @@ export async function saveSharedGoalAchievement(data: {
     goal.deadline,
     completionDate
   );
+  const statusError = validateAchievementStatus(input.status, goal.uomType, score, completionDate);
+  if (statusError) return { success: false, error: statusError };
 
   await prisma.achievement.upsert({
     where: { goalId_quarter: { goalId: goal.id, quarter: input.quarter } },

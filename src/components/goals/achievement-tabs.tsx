@@ -224,12 +224,15 @@ function EditableForm({
   function handleSave() {
     const payload: SavePayload = { status };
 
-    if (!isTimeline) {
+    if (status === "NOT_STARTED") {
+      const plannedValue = parseFloat(planned);
+      if (!isNaN(plannedValue)) payload.planned = plannedValue;
+    } else if (!isTimeline) {
       const plannedValue = parseFloat(planned);
       if (!isNaN(plannedValue)) payload.planned = plannedValue;
       const actualValue = parseFloat(actual);
       if (!isNaN(actualValue)) payload.actual = actualValue;
-    } else if (completionDate) {
+    } else if (status === "COMPLETED" && completionDate) {
       payload.completionDate = new Date(completionDate);
     }
 
@@ -289,6 +292,7 @@ function EditableForm({
             type="date"
             value={completionDate}
             onChange={(e) => setCompletionDate(e.target.value)}
+            disabled={status !== "COMPLETED"}
           />
         </div>
       ) : (
@@ -304,6 +308,7 @@ function EditableForm({
             value={actual}
             onChange={(e) => setActual(e.target.value)}
             min={0}
+            disabled={status === "NOT_STARTED"}
             max={
               goal.uomType === "PERCENTAGE"
                 ? 100

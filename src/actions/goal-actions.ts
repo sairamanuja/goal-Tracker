@@ -15,7 +15,7 @@ import {
   goalSubmissionEmail,
 } from "@/lib/notifications";
 import { createNotification } from "@/lib/create-notification";
-import type { UomDirection, UomType } from "@/generated/prisma";
+import { Prisma, type UomDirection, type UomType } from "@/generated/prisma";
 
 export type GoalFormData = {
   thrustArea: string;
@@ -68,13 +68,6 @@ export async function createGoal(
     return { success: false, error: "Goal setting window is not currently open" };
   }
 
-  const count = await prisma.goal.count({
-    where: { userId, cycleId: data.cycleId },
-  });
-  if (count >= MAX_GOALS_PER_CYCLE) {
-    return { success: false, error: "Maximum 8 goals allowed per cycle" };
-  }
-
   const parsed = goalSchema.safeParse({
     ...data,
     deadline: data.deadline ? new Date(data.deadline) : undefined,
@@ -97,25 +90,41 @@ export async function createGoal(
       ? new Date(parsed.data.deadline)
       : undefined;
 
-  const goal = await prisma.goal.create({
-    data: {
-      userId,
-      cycleId: data.cycleId,
-      thrustArea,
-      title,
-      description: description || null,
-      uomType,
-      uomDirection: uomType === "ZERO" || uomType === "TIMELINE" ? "MIN" : uomDirection,
-      target,
-      deadline,
-      weightage,
-      status: "DRAFT",
-    },
-  });
+  try {
+    const goal = await prisma.$transaction(
+      async (tx) => {
+        const count = await tx.goal.count({
+          where: { userId, cycleId: data.cycleId },
+        });
+        if (count >= MAX_GOALS_PER_CYCLE) {
+          throw new Error("Maximum 8 goals allowed per cycle");
+        }
 
-  updateTag("employee-goals");
-  revalidatePath("/employee/goals");
-  return { success: true, goalId: goal.id };
+        return tx.goal.create({
+          data: {
+            userId,
+            cycleId: data.cycleId,
+            thrustArea,
+            title,
+            description: description || null,
+            uomType,
+            uomDirection: uomType === "ZERO" || uomType === "TIMELINE" ? "MIN" : uomDirection,
+            target,
+            deadline,
+            weightage,
+            status: "DRAFT",
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+
+    updateTag("employee-goals");
+    revalidatePath("/employee/goals");
+    return { success: true, goalId: goal.id };
+  } catch (e: unknown) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to create goal" };
+  }
 }
 
 export async function updateGoal(
@@ -264,44 +273,41 @@ export async function submitGoalSheet(
 
   const userId = session.user.userId;
 
-  const goals = await prisma.goal.findMany({
-    where: { userId, cycleId },
-  });
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const goals = await tx.goal.findMany({
+          where: { userId, cycleId },
+        });
 
   if (goals.length === 0) {
-    return { success: false, error: "No goals to submit" };
+    throw new Error("No goals to submit");
   }
 
   if (goals.length > MAX_GOALS_PER_CYCLE) {
-    return { success: false, error: "Maximum 8 goals allowed per cycle" };
+    throw new Error("Maximum 8 goals allowed per cycle");
   }
 
   const editableGoals = goals.filter((g) => g.status === "DRAFT" || g.status === "RETURNED");
   if (editableGoals.length === 0) {
-    return { success: false, error: "No draft or returned goals to submit" };
+    throw new Error("No draft or returned goals to submit");
   }
 
   if (goals.some((g) => g.status === "SUBMITTED")) {
-    return { success: false, error: "Goal sheet is already submitted and awaiting approval" };
+    throw new Error("Goal sheet is already submitted and awaiting approval");
   }
 
   const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
   if (belowMin) {
-    return {
-      success: false,
-      error: `Goal "${belowMin.title}" has weightage below 10%. Each goal must have at least 10% weightage.`,
-    };
+    throw new Error(`Goal "${belowMin.title}" has weightage below 10%. Each goal must have at least 10% weightage.`);
   }
 
   const totalWeight = goals.reduce((sum, g) => sum + g.weightage, 0);
   if (!isTotalWeightageExact(totalWeight)) {
-    return {
-      success: false,
-      error: `Total weightage is ${totalWeight.toFixed(1)}% — must equal exactly 100%`,
-    };
+    throw new Error(`Total weightage is ${totalWeight.toFixed(1)}% - must equal exactly 100%`);
   }
 
-  await prisma.goal.updateMany({
+  await tx.goal.updateMany({
     where: {
       userId,
       cycleId,
@@ -309,6 +315,12 @@ export async function submitGoalSheet(
     },
     data: { status: "SUBMITTED" },
   });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+  } catch (e: unknown) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to submit goal sheet" };
+  }
 
   updateTag("employee-goals");
   revalidatePath("/employee/goals");

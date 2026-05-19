@@ -100,7 +100,10 @@ export function SharedGoalAchievementButton({
       status,
     };
 
-    if (isTimeline) {
+    if (status === "NOT_STARTED") {
+      const plannedValue = parseFloat(planned);
+      if (!isNaN(plannedValue)) payload.planned = plannedValue;
+    } else if (isTimeline && status === "COMPLETED") {
       if (!completionDate) {
         toast.error("Completion date is required for timeline goals");
         return;
@@ -190,6 +193,7 @@ export function SharedGoalAchievementButton({
                 type="date"
                 value={completionDate}
                 onChange={(e) => setCompletionDate(e.target.value)}
+                disabled={status !== "COMPLETED"}
               />
             </div>
           ) : (
@@ -205,6 +209,7 @@ export function SharedGoalAchievementButton({
                 value={actual}
                 onChange={(e) => setActual(e.target.value)}
                 placeholder="Actual for this quarter"
+                disabled={status === "NOT_STARTED"}
               />
             </div>
           )}

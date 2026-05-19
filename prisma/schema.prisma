@@ -112,7 +112,9 @@ model GoalCycle {
   status           CycleStatus @default(DRAFT)
   forceOpenQuarter String?
 
-  goals Goal[]
+  goals    Goal[]
+  checkIns CheckIn[]
+  escalations Escalation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -151,6 +153,9 @@ model Goal {
   updatedAt DateTime @updatedAt
 
   @@index([userId, cycleId])
+  @@index([cycleId, status])
+  @@index([userId, cycleId, status])
+  @@index([sharedFromId])
 }
 
 model Achievement {
@@ -171,6 +176,8 @@ model Achievement {
   updatedAt DateTime @updatedAt
 
   @@unique([goalId, quarter])
+  @@index([userId, quarter])
+  @@index([quarter, score])
 }
 
 model CheckIn {
@@ -179,13 +186,17 @@ model CheckIn {
   manager    User    @relation("CheckInManager", fields: [managerId], references: [id])
   employeeId String
   employee   User    @relation("CheckInEmployee", fields: [employeeId], references: [id])
+  cycleId    String
+  cycle      GoalCycle @relation(fields: [cycleId], references: [id])
   quarter    Quarter
   comment    String  @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([managerId, employeeId, quarter])
+  @@unique([managerId, employeeId, cycleId, quarter])
+  @@index([cycleId, quarter])
+  @@index([employeeId, cycleId, quarter])
 }
 
 model AuditLog {
@@ -200,6 +211,10 @@ model AuditLog {
   newValue String?
 
   createdAt DateTime @default(now())
+
+  @@index([goalId, createdAt])
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }
 
 model EscalationRule {
@@ -222,10 +237,16 @@ model Escalation {
   rule       EscalationRule @relation(fields: [ruleId], references: [id])
   targetId   String
   target     User           @relation("EscalationTarget", fields: [targetId], references: [id])
+  cycleId    String
+  cycle      GoalCycle      @relation(fields: [cycleId], references: [id])
   quarter    Quarter?
   status     String         @default("OPEN")
   resolvedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([cycleId, status])
+  @@index([ruleId, targetId, cycleId, status])
+  @@index([targetId, status])
 }

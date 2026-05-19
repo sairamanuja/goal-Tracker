@@ -60,13 +60,17 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
         include: { manager: { select: { email: true } } },
       });
 
-      for (const emp of employees) {
-        const exists = await prisma.escalation.findFirst({
-          where: { ruleId: rule.id, targetId: emp.id, status: "OPEN" },
-        });
-        if (exists) continue;
+      const existing = await getOpenEscalationTargets(rule.id, cycle.id, employees.map((emp) => emp.id));
+      const toCreate = employees.filter((emp) => !existing.has(emp.id));
 
-        await prisma.escalation.create({ data: { ruleId: rule.id, targetId: emp.id } });
+      if (toCreate.length > 0) {
+        await prisma.escalation.createMany({
+          data: toCreate.map((emp) => ({ ruleId: rule.id, targetId: emp.id, cycleId: cycle.id })),
+          skipDuplicates: true,
+        });
+      }
+
+      for (const emp of toCreate) {
         await notifyLevel(rule.level, emp.email, emp.manager?.email ?? null, null, hrEmails, {
           subject: `GoalTrack Escalation: ${emp.name} has not submitted goals`,
           message: `Escalation (Level ${rule.level}): ${emp.name} has not submitted goal sheet for ${cycle.name}.`,
@@ -92,14 +96,18 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
         include: { manager: { select: { email: true, manager: { select: { email: true } } } } },
       });
 
-      for (const emp of employees) {
-        const exists = await prisma.escalation.findFirst({
-          where: { ruleId: rule.id, targetId: emp.id, status: "OPEN" },
-        });
-        if (exists) continue;
+      const existing = await getOpenEscalationTargets(rule.id, cycle.id, employees.map((emp) => emp.id));
+      const toCreate = employees.filter((emp) => !existing.has(emp.id));
 
+      if (toCreate.length > 0) {
+        await prisma.escalation.createMany({
+          data: toCreate.map((emp) => ({ ruleId: rule.id, targetId: emp.id, cycleId: cycle.id })),
+          skipDuplicates: true,
+        });
+      }
+
+      for (const emp of toCreate) {
         const skipLevelEmail = emp.manager?.manager?.email ?? null;
-        await prisma.escalation.create({ data: { ruleId: rule.id, targetId: emp.id } });
         await notifyLevel(rule.level, emp.email, emp.manager?.email ?? null, skipLevelEmail, hrEmails, {
           subject: `GoalTrack Escalation: goals pending approval for ${emp.name}`,
           message: `Escalation (Level ${rule.level}): ${emp.name}'s goal sheet has been pending approval for over ${rule.daysAfter} days in ${cycle.name}.`,
@@ -137,14 +145,23 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
       const completedEmployeeIds = new Set(completedCheckIns.map((c) => c.employeeId));
       const violators = employees.filter((e) => !completedEmployeeIds.has(e.id));
 
-      for (const emp of violators) {
-        const exists = await prisma.escalation.findFirst({
-          where: { ruleId: rule.id, targetId: emp.id, quarter: activeQ, status: "OPEN" },
-        });
-        if (exists) continue;
+      const existing = await getOpenEscalationTargets(rule.id, cycle.id, violators.map((emp) => emp.id), activeQ);
+      const toCreate = violators.filter((emp) => !existing.has(emp.id));
 
+      if (toCreate.length > 0) {
+        await prisma.escalation.createMany({
+          data: toCreate.map((emp) => ({
+            ruleId: rule.id,
+            targetId: emp.id,
+            cycleId: cycle.id,
+            quarter: activeQ,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      for (const emp of toCreate) {
         const skipLevelEmail = emp.manager?.manager?.email ?? null;
-        await prisma.escalation.create({ data: { ruleId: rule.id, targetId: emp.id, quarter: activeQ } });
         await notifyLevel(rule.level, emp.email, emp.manager?.email ?? null, skipLevelEmail, hrEmails, {
           subject: `GoalTrack Escalation: ${emp.name} has not logged ${activeQ} achievement`,
           message: `Escalation (Level ${rule.level}): ${emp.name} has not logged ${activeQ} achievement in ${cycle.name}.`,
@@ -174,6 +191,28 @@ function getQOpenDate(cycle: { q1Open: Date; q2Open: Date; q3Open: Date; q4Open:
   return null;
 }
 
+async function getOpenEscalationTargets(
+  ruleId: string,
+  cycleId: string,
+  targetIds: string[],
+  quarter?: Quarter
+) {
+  if (targetIds.length === 0) return new Set<string>();
+
+  const existing = await prisma.escalation.findMany({
+    where: {
+      ruleId,
+      cycleId,
+      targetId: { in: targetIds },
+      quarter: quarter ?? null,
+      status: "OPEN",
+    },
+    select: { targetId: true },
+  });
+
+  return new Set(existing.map((e) => e.targetId));
+}
+
 async function notifyLevel(
   level: number,
   employeeEmail: string,
@@ -183,19 +222,29 @@ async function notifyLevel(
   msg: { subject: string; message: string; deepLink: string }
 ) {
   try {
+    const body = `<p>${escapeHtml(msg.message)}</p>`;
     if (level === 1) {
-      void sendEmailNotification(employeeEmail, msg.subject, `<p>${msg.message}</p>`);
+      void sendEmailNotification(employeeEmail, msg.subject, body);
     } else if (level === 2) {
       // Use skip-level manager if available; fall back to direct manager
       const target = skipLevelEmail ?? managerEmail;
       if (target) {
-        void sendEmailNotification(target, msg.subject, `<p>${msg.message}</p>`);
+        void sendEmailNotification(target, msg.subject, body);
         void sendTeamsNotification(target, msg.message, msg.deepLink);
       }
     } else if (level === 3) {
       for (const email of hrEmails) {
-        void sendEmailNotification(email, msg.subject, `<p>${msg.message}</p>`);
+        void sendEmailNotification(email, msg.subject, body);
       }
     }
   } catch { /* ignore */ }
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }

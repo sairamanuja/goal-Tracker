@@ -7,16 +7,16 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const password = await bcrypt.hash("Password@123", 12);
+  const demoPassword = await bcrypt.hash("Password@123", 12);
 
   // Create admin
   const admin = await prisma.user.upsert({
     where: { email: "admin@goaltrack.com" },
-    update: {},
+    update: { password: demoPassword },
     create: {
       email: "admin@goaltrack.com",
       name: "Priya Sharma",
-      password,
+      password: demoPassword,
       role: "ADMIN",
       department: "HR",
     },
@@ -25,11 +25,11 @@ async function main() {
   // Create managers
   const manager1 = await prisma.user.upsert({
     where: { email: "manager@goaltrack.com" },
-    update: {},
+    update: { password: demoPassword },
     create: {
       email: "manager@goaltrack.com",
       name: "Rahul Mehta",
-      password,
+      password: demoPassword,
       role: "MANAGER",
       department: "Engineering",
     },
@@ -37,11 +37,11 @@ async function main() {
 
   const manager2 = await prisma.user.upsert({
     where: { email: "manager2@goaltrack.com" },
-    update: {},
+    update: { password: demoPassword },
     create: {
       email: "manager2@goaltrack.com",
       name: "Neha Gupta",
-      password,
+      password: demoPassword,
       role: "MANAGER",
       department: "Sales",
     },
@@ -49,12 +49,12 @@ async function main() {
 
   // Create employees
   await prisma.user.upsert({
-    where: { email: "emp1@goaltrack.com" },
-    update: {},
+    where: { email: "emp@goaltrack.com" },
+    update: { password: demoPassword },
     create: {
-      email: "emp1@goaltrack.com",
+      email: "emp@goaltrack.com",
       name: "Ananya Reddy",
-      password,
+      password: demoPassword,
       role: "EMPLOYEE",
       department: "Engineering",
       managerId: manager1.id,
@@ -63,11 +63,11 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "emp2@goaltrack.com" },
-    update: {},
+    update: { password: demoPassword },
     create: {
       email: "emp2@goaltrack.com",
       name: "Vikram Singh",
-      password,
+      password: demoPassword,
       role: "EMPLOYEE",
       department: "Engineering",
       managerId: manager1.id,
@@ -76,11 +76,11 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: "emp3@goaltrack.com" },
-    update: {},
+    update: { password: demoPassword },
     create: {
       email: "emp3@goaltrack.com",
       name: "Arjun Patel",
-      password,
+      password: demoPassword,
       role: "EMPLOYEE",
       department: "Sales",
       managerId: manager2.id,

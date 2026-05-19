@@ -1,4 +1,4 @@
-import type { GoalCycle, Quarter, UomDirection, UomType } from "@/generated/prisma";
+import type { GoalCycle, ProgressStatus, Quarter, UomDirection, UomType } from "@/generated/prisma";
 
 // Legacy — kept for backward compat
 export function calculateScore(
@@ -41,6 +41,44 @@ export function computeScore(
       if (actual === null) return null;
       return actual === 0 ? 100 : 0;
   }
+  return null;
+}
+
+export function computeAchievementScore(
+  status: ProgressStatus,
+  uomType: UomType,
+  uomDirection: UomDirection,
+  target: number,
+  actual: number | null,
+  deadline: Date | null,
+  completionDate: Date | null
+): number | null {
+  if (status === "NOT_STARTED") return 0;
+  return computeScore(uomType, uomDirection, target, actual, deadline, completionDate);
+}
+
+export function validateAchievementStatus(
+  status: ProgressStatus,
+  uomType: UomType,
+  score: number | null,
+  completionDate: Date | null
+): string | null {
+  if (status === "ON_TRACK" && uomType === "TIMELINE" && completionDate) {
+    return "Use Completed when a timeline goal has a completion date";
+  }
+
+  if (status === "ON_TRACK" && uomType !== "TIMELINE" && score === 100) {
+    return "Use Completed once the target has been fully achieved";
+  }
+
+  if (status === "COMPLETED" && uomType === "TIMELINE" && !completionDate) {
+    return "Completion date is required for completed timeline goals";
+  }
+
+  if (status === "COMPLETED" && uomType !== "TIMELINE" && score !== 100) {
+    return "Completed can only be selected after the target is fully achieved";
+  }
+
   return null;
 }
 
