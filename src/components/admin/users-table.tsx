@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { UserEditDialog } from "@/components/admin/user-edit-dialog";
 import { CreateUserDialog } from "@/components/admin/create-user-dialog";
-import { Pencil, UserPlus } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { deleteUser } from "@/actions/admin-actions";
+import { Pencil, Trash2, UserPlus } from "lucide-react";
 import type { Role } from "@/generated/prisma";
 
 interface UserRow {
@@ -31,7 +34,23 @@ const ROLE_VARIANT: Record<Role, "default" | "secondary" | "outline"> = {
 
 export function UsersTable({ users, managers }: UsersTableProps) {
   const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [deletingUser, setDeletingUser] = useState<UserRow | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [isDeleting, startDeleteTransition] = useTransition();
+
+  function handleDelete() {
+    if (!deletingUser) return;
+
+    startDeleteTransition(async () => {
+      const result = await deleteUser(deletingUser.id);
+      if (result.success) {
+        toast.success("User deleted");
+        setDeletingUser(null);
+      } else {
+        toast.error(result.error ?? "Delete failed");
+      }
+    });
+  }
 
   return (
     <>
@@ -64,16 +83,27 @@ export function UsersTable({ users, managers }: UsersTableProps) {
                 </td>
                 <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{user.department ?? "—"}</td>
                 <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{user.managerName ?? "—"}</td>
-                <td className="px-4 py-3 text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditingUser(user)}
-                    className="gap-1.5"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    Edit
-                  </Button>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingUser(user)}
+                      className="gap-1.5"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="icon-sm"
+                      onClick={() => setDeletingUser(user)}
+                      title={`Delete ${user.name}`}
+                      aria-label={`Delete ${user.name}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -94,6 +124,21 @@ export function UsersTable({ users, managers }: UsersTableProps) {
         open={createOpen}
         onOpenChange={setCreateOpen}
         managers={managers}
+      />
+
+      <ConfirmDialog
+        open={!!deletingUser}
+        onOpenChange={(open) => !open && setDeletingUser(null)}
+        title="Delete User"
+        description={
+          deletingUser
+            ? `Delete ${deletingUser.name}? This removes their goals, achievements, check-ins, escalations, notifications, and related audit entries.`
+            : ""
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        isPending={isDeleting}
+        onConfirm={handleDelete}
       />
     </>
   );

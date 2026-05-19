@@ -11,6 +11,7 @@ import {
 } from "@/lib/notifications";
 import { createNotification } from "@/lib/create-notification";
 import { isTotalWeightageExact, MAX_GOALS_PER_CYCLE, MIN_GOAL_WEIGHTAGE } from "@/lib/goal-rules";
+import { Prisma } from "@/generated/prisma";
 
 async function getManagerSession() {
   const session = await auth();
@@ -36,55 +37,60 @@ export async function approveGoalSheet(
   const employee = await verifyDirectReport(managerId, employeeId);
   if (!employee) return { success: false, error: "Employee not found or not your direct report" };
 
-  const goals = await prisma.goal.findMany({
-    where: { userId: employeeId, cycleId },
-  });
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const sheet = await tx.goalSheet.findUnique({
+          where: { userId_cycleId: { userId: employeeId, cycleId } },
+          include: { goals: true },
+        });
+        if (!sheet || sheet.status !== "SUBMITTED") {
+          throw new Error("No submitted goal sheet to approve");
+        }
 
-  if (!goals.some((g) => g.status === "SUBMITTED")) {
-    return { success: false, error: "No submitted goals to approve" };
+        const goals = sheet.goals;
+        if (goals.length === 0) throw new Error("No submitted goals to approve");
+
+        const totalWeight = goals.reduce((s, g) => s + g.weightage, 0);
+        if (!isTotalWeightageExact(totalWeight)) {
+          throw new Error(`Total weightage is ${totalWeight.toFixed(1)}% - must equal 100%`);
+        }
+
+        const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
+        if (belowMin) throw new Error(`Goal "${belowMin.title}" has weightage below 10%`);
+
+        if (goals.length > MAX_GOALS_PER_CYCLE) {
+          throw new Error("Maximum 8 goals allowed per cycle");
+        }
+
+        await tx.goalSheet.update({
+          where: { id: sheet.id },
+          data: { status: "APPROVED", isLocked: true, returnComment: null },
+        });
+        await tx.goal.updateMany({
+          where: { sheetId: sheet.id },
+          data: { status: "APPROVED", isLocked: true, returnComment: null },
+        });
+
+        await tx.auditLog.createMany({
+          data: goals.map((g) => ({
+            goalId: g.id,
+            userId: managerId,
+            action: "APPROVED",
+          })),
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+  } catch (e: unknown) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to approve goal sheet" };
   }
-
-  const totalWeight = goals.reduce((s, g) => s + g.weightage, 0);
-  if (!isTotalWeightageExact(totalWeight)) {
-    return {
-      success: false,
-      error: `Total weightage is ${totalWeight.toFixed(1)}% — must equal 100%`,
-    };
-  }
-
-  const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
-  if (belowMin) {
-    return {
-      success: false,
-      error: `Goal "${belowMin.title}" has weightage below 10%`,
-    };
-  }
-
-  if (goals.length > MAX_GOALS_PER_CYCLE) {
-    return { success: false, error: "Maximum 8 goals allowed per cycle" };
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.goal.updateMany({
-      where: { userId: employeeId, cycleId },
-      data: { status: "APPROVED", isLocked: true },
-    });
-
-    await tx.auditLog.createMany({
-      data: goals.map((g) => ({
-        goalId: g.id,
-        userId: managerId,
-        action: "APPROVED",
-      })),
-    });
-  });
 
   updateTag("employee-goals");
   updateTag("manager-dashboard");
   revalidatePath(`/manager/team/${employeeId}`);
   revalidatePath("/manager/dashboard");
 
-  // Notify employee — fire-and-forget (don't block the response)
   void (async () => {
     try {
       const [emp, mgr, cycle] = await Promise.all([
@@ -108,7 +114,9 @@ export async function approveGoalSheet(
           href: "/employee/goals",
         });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   })();
 
   return { success: true };
@@ -126,29 +134,38 @@ export async function returnGoalSheet(
   const employee = await verifyDirectReport(managerId, employeeId);
   if (!employee) return { success: false, error: "Employee not found or not your direct report" };
 
-  if (!comment || comment.trim().length < 10) {
+  const trimmedComment = comment.trim();
+  if (trimmedComment.length < 10) {
     return { success: false, error: "Return comment must be at least 10 characters" };
   }
 
-  const goals = await prisma.goal.findMany({
-    where: { userId: employeeId, cycleId, status: "SUBMITTED" },
+  const returned = await prisma.$transaction(async (tx) => {
+    const sheet = await tx.goalSheet.findUnique({
+      where: { userId_cycleId: { userId: employeeId, cycleId } },
+      select: { id: true, status: true },
+    });
+    if (!sheet || sheet.status !== "SUBMITTED") return false;
+
+    await tx.goalSheet.update({
+      where: { id: sheet.id },
+      data: { status: "RETURNED", isLocked: false, returnComment: trimmedComment },
+    });
+    await tx.goal.updateMany({
+      where: { sheetId: sheet.id },
+      data: { status: "RETURNED", isLocked: false, returnComment: trimmedComment },
+    });
+    return true;
   });
 
-  if (goals.length === 0) {
-    return { success: false, error: "No submitted goals to return" };
+  if (!returned) {
+    return { success: false, error: "No submitted goal sheet to return" };
   }
-
-  await prisma.goal.updateMany({
-    where: { userId: employeeId, cycleId, status: "SUBMITTED" },
-    data: { status: "RETURNED", returnComment: comment.trim() },
-  });
 
   updateTag("employee-goals");
   updateTag("manager-dashboard");
   revalidatePath(`/manager/team/${employeeId}`);
   revalidatePath("/manager/dashboard");
 
-  // Notify employee — fire-and-forget (don't block the response)
   void (async () => {
     try {
       const [emp, mgr, cycle] = await Promise.all([
@@ -161,7 +178,7 @@ export async function returnGoalSheet(
           await sendEmailNotification(
             emp.email,
             "GoalTrack: Your goal sheet has been returned for revision",
-            goalReturnedEmail(mgr.name, comment.trim(), cycle.name)
+            goalReturnedEmail(mgr.name, trimmedComment, cycle.name)
           );
           await sendTeamsNotification(
             emp.email,
@@ -177,7 +194,9 @@ export async function returnGoalSheet(
           href: "/employee/goals",
         });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   })();
 
   return { success: true };
@@ -194,10 +213,10 @@ export async function updateGoalAsManager(
 
   const goal = await prisma.goal.findUnique({
     where: { id: goalId },
-    include: { user: true },
+    include: { user: true, sheet: { select: { status: true } } },
   });
   if (!goal) return { success: false, error: "Goal not found" };
-  if (goal.status !== "SUBMITTED") {
+  if (goal.sheet?.status !== "SUBMITTED" || goal.status !== "SUBMITTED") {
     return { success: false, error: "Only SUBMITTED goals can be edited" };
   }
   if (goal.user.managerId !== managerId) {
@@ -222,16 +241,11 @@ export async function updateGoalAsManager(
 
   if (data.deadline !== undefined && data.deadline !== null) {
     const date = new Date(data.deadline);
-    if (Number.isNaN(date.getTime())) {
-      return { success: false, error: "Deadline is invalid" };
-    }
+    if (Number.isNaN(date.getTime())) return { success: false, error: "Deadline is invalid" };
   }
 
-  // Shared goal copies: only weightage may be edited by manager; target/deadline are locked
-  if (goal.sharedFromId !== null) {
-    if (data.target !== undefined || data.deadline !== undefined) {
-      return { success: false, error: "Target and deadline are locked on shared goals" };
-    }
+  if (goal.sharedFromId !== null && (data.target !== undefined || data.deadline !== undefined)) {
+    return { success: false, error: "Target and deadline are locked on shared goals" };
   }
 
   const updateData: Record<string, unknown> = {};
@@ -288,9 +302,7 @@ export async function updateGoalAsManager(
 
   await prisma.$transaction(async (tx) => {
     await tx.goal.update({ where: { id: goalId }, data: updateData });
-    if (auditEntries.length > 0) {
-      await tx.auditLog.createMany({ data: auditEntries });
-    }
+    if (auditEntries.length > 0) await tx.auditLog.createMany({ data: auditEntries });
   });
 
   revalidatePath(`/manager/team/${goal.userId}`);

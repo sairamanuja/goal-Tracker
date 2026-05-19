@@ -69,6 +69,7 @@ model User {
   reports       User[]   @relation("ManagerReports")
 
   goals              Goal[]
+  goalSheets         GoalSheet[]
   achievements       Achievement[]
   checkInsGiven      CheckIn[]  @relation("CheckInManager")
   checkInsReceived   CheckIn[]  @relation("CheckInEmployee")
@@ -113,11 +114,32 @@ model GoalCycle {
   forceOpenQuarter String?
 
   goals    Goal[]
+  goalSheets GoalSheet[]
   checkIns CheckIn[]
   escalations Escalation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model GoalSheet {
+  id            String     @id @default(cuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id])
+  cycleId       String
+  cycle         GoalCycle  @relation(fields: [cycleId], references: [id])
+  status        GoalStatus @default(DRAFT)
+  isLocked      Boolean    @default(false)
+  returnComment String?    @db.Text
+
+  goals Goal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, cycleId])
+  @@index([cycleId, status])
+  @@index([userId, status])
 }
 
 model Goal {
@@ -126,6 +148,8 @@ model Goal {
   user         User         @relation(fields: [userId], references: [id])
   cycleId      String
   cycle        GoalCycle    @relation(fields: [cycleId], references: [id])
+  sheetId      String?
+  sheet        GoalSheet?   @relation(fields: [sheetId], references: [id])
 
   thrustArea   String
   title        String
@@ -155,6 +179,7 @@ model Goal {
   @@index([userId, cycleId])
   @@index([cycleId, status])
   @@index([userId, cycleId, status])
+  @@index([sheetId])
   @@index([sharedFromId])
 }
 

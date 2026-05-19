@@ -253,9 +253,12 @@ export async function unlockGoal(
     if (reason.trim().length < 5) {
       return { success: false, error: "Reason must be at least 5 characters" };
     }
-    const goal = await prisma.goal.findUnique({ where: { id: goalId } });
+    const goal = await prisma.goal.findUnique({
+      where: { id: goalId },
+      include: { sheet: { select: { id: true, status: true, isLocked: true } } },
+    });
     if (!goal) return { success: false, error: "Goal not found" };
-    if (goal.status !== "APPROVED" || !goal.isLocked) {
+    if (goal.status !== "APPROVED" || !goal.isLocked || !goal.sheet) {
       return { success: false, error: "Only locked approved goals can be unlocked" };
     }
 
@@ -263,41 +266,46 @@ export async function unlockGoal(
     const returnComment = `Unlocked by Admin: ${trimmedReason}`;
 
     await prisma.$transaction(async (tx) => {
-      await tx.goal.update({
-        where: { id: goalId },
-        data: {
-          isLocked: false,
-          status: "RETURNED",
-          returnComment,
-        },
+      const sheetGoals = await tx.goal.findMany({
+        where: { sheetId: goal.sheet!.id },
+        select: { id: true, status: true, isLocked: true, returnComment: true },
+      });
+
+      await tx.goalSheet.update({
+        where: { id: goal.sheet!.id },
+        data: { isLocked: false, status: "RETURNED", returnComment },
+      });
+      await tx.goal.updateMany({
+        where: { sheetId: goal.sheet!.id },
+        data: { isLocked: false, status: "RETURNED", returnComment },
       });
       await tx.auditLog.createMany({
-        data: [
+        data: sheetGoals.flatMap((g) => [
           {
-            goalId,
+            goalId: g.id,
             userId: adminId,
             action: "UNLOCKED",
             field: "isLocked",
-            oldValue: "true",
+            oldValue: String(g.isLocked),
             newValue: "false",
           },
           {
-            goalId,
+            goalId: g.id,
             userId: adminId,
             action: "UNLOCKED",
             field: "status",
-            oldValue: goal.status,
+            oldValue: g.status,
             newValue: "RETURNED",
           },
           {
-            goalId,
+            goalId: g.id,
             userId: adminId,
             action: "UNLOCKED",
             field: "returnComment",
-            oldValue: goal.returnComment ?? "null",
+            oldValue: g.returnComment ?? "null",
             newValue: returnComment,
           },
-        ],
+        ]),
       });
     });
     updateTag("employee-goals");
@@ -315,8 +323,8 @@ export async function unlockGoal(
         await createNotification({
           userId: goal.userId,
           type: "GOAL_UNLOCKED",
-          title: "Goal unlocked for editing",
-          body: `Your goal "${goal.title}" has been unlocked and can now be edited.`,
+          title: "Goal sheet unlocked for editing",
+          body: `Your goal sheet has been unlocked because "${goal.title}" needs rework.`,
           href: "/employee/goals",
         });
       } catch { /* ignore */ }
@@ -348,6 +356,97 @@ export async function updateUser(
     return { success: true };
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : "Failed" };
+  }
+}
+
+export async function deleteUser(
+  userId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const adminId = await requireAdminSession();
+    if (userId === adminId) {
+      return { success: false, error: "You cannot delete your own account" };
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, name: true },
+    });
+    if (!user) return { success: false, error: "User not found" };
+
+    if (user.role === "ADMIN") {
+      const adminCount = await prisma.user.count({ where: { role: "ADMIN" } });
+      if (adminCount <= 1) {
+        return { success: false, error: "At least one admin account is required" };
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const ownedGoals = await tx.goal.findMany({
+        where: { userId },
+        select: { id: true },
+      });
+      const ownedGoalIds = ownedGoals.map((g) => g.id);
+
+      const linkedCopies = ownedGoalIds.length > 0
+        ? await tx.goal.findMany({
+            where: { sharedFromId: { in: ownedGoalIds } },
+            select: { id: true },
+          })
+        : [];
+      const linkedCopyIds = linkedCopies.map((g) => g.id);
+      const allGoalIds = [...new Set([...ownedGoalIds, ...linkedCopyIds])];
+
+      await tx.user.updateMany({
+        where: { managerId: userId },
+        data: { managerId: null },
+      });
+
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.checkIn.deleteMany({
+        where: { OR: [{ managerId: userId }, { employeeId: userId }] },
+      });
+      await tx.escalation.deleteMany({ where: { targetId: userId } });
+      await tx.achievement.deleteMany({
+        where: {
+          OR: [
+            { userId },
+            ...(allGoalIds.length > 0 ? [{ goalId: { in: allGoalIds } }] : []),
+          ],
+        },
+      });
+      await tx.auditLog.deleteMany({
+        where: {
+          OR: [
+            { userId },
+            ...(allGoalIds.length > 0 ? [{ goalId: { in: allGoalIds } }] : []),
+          ],
+        },
+      });
+
+      if (linkedCopyIds.length > 0) {
+        await tx.goal.deleteMany({ where: { id: { in: linkedCopyIds } } });
+      }
+      if (ownedGoalIds.length > 0) {
+        await tx.goal.deleteMany({ where: { id: { in: ownedGoalIds } } });
+      }
+      await tx.goalSheet.deleteMany({ where: { userId } });
+
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    updateTag("employee-goals");
+    updateTag("manager-dashboard");
+    updateTag("admin-dashboard");
+    updateTag("reports");
+    updateTag("analytics");
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/reports");
+    revalidatePath("/admin/audit-log");
+    revalidatePath("/admin/escalations");
+    return { success: true };
+  } catch (e: unknown) {
+    return { success: false, error: e instanceof Error ? e.message : "Failed to delete user" };
   }
 }
 

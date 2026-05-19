@@ -93,6 +93,15 @@ export async function createGoal(
   try {
     const goal = await prisma.$transaction(
       async (tx) => {
+        const sheet = await tx.goalSheet.upsert({
+          where: { userId_cycleId: { userId, cycleId: data.cycleId } },
+          update: {},
+          create: { userId, cycleId: data.cycleId },
+        });
+        if (sheet.status !== "DRAFT" && sheet.status !== "RETURNED") {
+          throw new Error("Goal sheet cannot be edited in its current status");
+        }
+
         const count = await tx.goal.count({
           where: { userId, cycleId: data.cycleId },
         });
@@ -104,6 +113,7 @@ export async function createGoal(
           data: {
             userId,
             cycleId: data.cycleId,
+            sheetId: sheet.id,
             thrustArea,
             title,
             description: description || null,
@@ -276,45 +286,46 @@ export async function submitGoalSheet(
   try {
     await prisma.$transaction(
       async (tx) => {
-        const goals = await tx.goal.findMany({
-          where: { userId, cycleId },
+        const sheet = await tx.goalSheet.findUnique({
+          where: { userId_cycleId: { userId, cycleId } },
+          include: { goals: true },
         });
+        if (!sheet) {
+          throw new Error("No goals to submit");
+        }
 
-  if (goals.length === 0) {
-    throw new Error("No goals to submit");
-  }
+        const goals = sheet.goals;
 
-  if (goals.length > MAX_GOALS_PER_CYCLE) {
-    throw new Error("Maximum 8 goals allowed per cycle");
-  }
+        if (goals.length === 0) {
+          throw new Error("No goals to submit");
+        }
 
-  const editableGoals = goals.filter((g) => g.status === "DRAFT" || g.status === "RETURNED");
-  if (editableGoals.length === 0) {
-    throw new Error("No draft or returned goals to submit");
-  }
+        if (goals.length > MAX_GOALS_PER_CYCLE) {
+          throw new Error("Maximum 8 goals allowed per cycle");
+        }
 
-  if (goals.some((g) => g.status === "SUBMITTED")) {
-    throw new Error("Goal sheet is already submitted and awaiting approval");
-  }
+        if (sheet.status !== "DRAFT" && sheet.status !== "RETURNED") {
+          throw new Error("Goal sheet is already submitted or approved");
+        }
 
-  const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
-  if (belowMin) {
-    throw new Error(`Goal "${belowMin.title}" has weightage below 10%. Each goal must have at least 10% weightage.`);
-  }
+        const belowMin = goals.find((g) => g.weightage < MIN_GOAL_WEIGHTAGE);
+        if (belowMin) {
+          throw new Error(`Goal "${belowMin.title}" has weightage below 10%. Each goal must have at least 10% weightage.`);
+        }
 
-  const totalWeight = goals.reduce((sum, g) => sum + g.weightage, 0);
-  if (!isTotalWeightageExact(totalWeight)) {
-    throw new Error(`Total weightage is ${totalWeight.toFixed(1)}% - must equal exactly 100%`);
-  }
+        const totalWeight = goals.reduce((sum, g) => sum + g.weightage, 0);
+        if (!isTotalWeightageExact(totalWeight)) {
+          throw new Error(`Total weightage is ${totalWeight.toFixed(1)}% - must equal exactly 100%`);
+        }
 
-  await tx.goal.updateMany({
-    where: {
-      userId,
-      cycleId,
-      status: { in: ["DRAFT", "RETURNED"] },
-    },
-    data: { status: "SUBMITTED" },
-  });
+        await tx.goalSheet.update({
+          where: { id: sheet.id },
+          data: { status: "SUBMITTED", isLocked: false, returnComment: null },
+        });
+        await tx.goal.updateMany({
+          where: { sheetId: sheet.id },
+          data: { status: "SUBMITTED", isLocked: false, returnComment: null },
+        });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
     );

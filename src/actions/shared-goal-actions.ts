@@ -150,24 +150,33 @@ export async function pushSharedGoal(data: SharedGoalInput): Promise<{
       },
     });
 
-    await tx.goal.createMany({
-      data: toCreate.map((recipientId) => ({
-        userId: recipientId,
-        cycleId: data.cycleId,
-        thrustArea: parsed.thrustArea,
-        title: parsed.title,
-        description: parsed.description || null,
-        uomType: parsed.uomType,
-        uomDirection,
-        target,
-        deadline,
-        weightage: parsed.weightage,
-        isShared: false,
-        sharedFromId: primary.id,
-        status: "DRAFT",
-        isLocked: false,
-      })),
-    });
+    for (const recipientId of toCreate) {
+      const sheet = await tx.goalSheet.upsert({
+        where: { userId_cycleId: { userId: recipientId, cycleId: data.cycleId } },
+        update: {},
+        create: { userId: recipientId, cycleId: data.cycleId },
+      });
+
+      await tx.goal.create({
+        data: {
+          userId: recipientId,
+          cycleId: data.cycleId,
+          sheetId: sheet.id,
+          thrustArea: parsed.thrustArea,
+          title: parsed.title,
+          description: parsed.description || null,
+          uomType: parsed.uomType,
+          uomDirection,
+          target,
+          deadline,
+          weightage: parsed.weightage,
+          isShared: false,
+          sharedFromId: primary.id,
+          status: "DRAFT",
+          isLocked: false,
+        },
+      });
+    }
   });
 
   revalidatePath("/admin/shared-goals");
