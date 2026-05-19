@@ -50,7 +50,7 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
       const employees = await prisma.user.findMany({
         where: {
           role: "EMPLOYEE",
-          goals: {
+          goalSheets: {
             none: {
               cycleId: cycle.id,
               status: { in: ["SUBMITTED", "APPROVED"] },
@@ -84,7 +84,7 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
     if (rule.condition === "NOT_APPROVED") {
       const cutoffDate = addDays(now, -rule.daysAfter);
 
-      const submittedGoalUsers = await prisma.goal.findMany({
+      const submittedGoalUsers = await prisma.goalSheet.findMany({
         where: { cycleId: cycle.id, status: "SUBMITTED", updatedAt: { lt: cutoffDate } },
         select: { userId: true },
         distinct: ["userId"],
@@ -127,7 +127,7 @@ export async function checkEscalations(): Promise<{ triggered: number }> {
       const employees = await prisma.user.findMany({
         where: {
           role: "EMPLOYEE",
-          goals: { some: { cycleId: cycle.id, status: "APPROVED" } },
+          goalSheets: { some: { cycleId: cycle.id, status: "APPROVED" } },
         },
         include: {
           manager: { select: { email: true, manager: { select: { email: true } } } },

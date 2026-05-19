@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ const LEVEL_LABELS: Record<number, string> = {
 };
 
 export function EscalationClient({ rules, escalations }: EscalationClientProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [runResult, setRunResult] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -66,8 +68,9 @@ export function EscalationClient({ rules, escalations }: EscalationClientProps) 
       const res = await fetch("/api/admin/run-escalations", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        setRunResult(`${data.triggered} escalation(s) triggered`);
-        toast.success(`Check complete — ${data.triggered} triggered`);
+        setRunResult(`${data.triggered} new escalation(s) triggered`);
+        toast.success(`Check complete — ${data.triggered} new`);
+        router.refresh();
       } else {
         toast.error(data.error ?? "Check failed");
       }
@@ -78,6 +81,7 @@ export function EscalationClient({ rules, escalations }: EscalationClientProps) 
     startTransition(async () => {
       const r = await toggleEscalationRule(id, !current);
       if (!r.success) toast.error(r.error ?? "Failed");
+      else router.refresh();
     });
   }
 
@@ -93,7 +97,7 @@ export function EscalationClient({ rules, escalations }: EscalationClientProps) 
         name: editName,
         daysAfter: parseInt(editDays),
       });
-      if (r.success) { toast.success("Rule updated"); setEditingId(null); }
+      if (r.success) { toast.success("Rule updated"); setEditingId(null); router.refresh(); }
       else toast.error(r.error ?? "Failed");
     });
   }
@@ -102,7 +106,7 @@ export function EscalationClient({ rules, escalations }: EscalationClientProps) 
     startTransition(async () => {
       const r = await resolveEscalation(id);
       if (!r.success) toast.error(r.error ?? "Failed");
-      else toast.success("Resolved");
+      else { toast.success("Resolved"); router.refresh(); }
     });
   }
 
@@ -110,7 +114,7 @@ export function EscalationClient({ rules, escalations }: EscalationClientProps) 
     startTransition(async () => {
       const r = await dismissEscalation(id);
       if (!r.success) toast.error(r.error ?? "Failed");
-      else toast.success("Dismissed");
+      else { toast.success("Dismissed"); router.refresh(); }
     });
   }
 
